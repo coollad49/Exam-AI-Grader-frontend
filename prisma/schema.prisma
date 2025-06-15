@@ -1,0 +1,191 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  role      UserRole @default(TEACHER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  gradingSessions GradingSession[]
+  sessionLogs     SessionLog[]
+
+  @@map("users")
+}
+
+model GradingSession {
+  id          String        @id @default(cuid())
+  title       String
+  subject     String
+  examYear    String
+  status      SessionStatus @default(PENDING)
+  numStudents Int
+  
+  // Grading configuration
+  gradingRubric Json
+  
+  // Session statistics
+  averageScore  Float?
+  highestScore  Float?
+  lowestScore   Float?
+  passingRate   Float?
+  
+  // Metadata
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  startedAt DateTime?
+  completedAt DateTime?
+  
+  // Relations
+  userId   String
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  students Student[]
+  logs     SessionLog[]
+
+  @@map("grading_sessions")
+}
+
+model Student {
+  id       String @id @default(cuid())
+  name     String
+  studentId String? // Optional external student ID
+  
+  // Exam file information
+  fileName     String?
+  fileSize     Int?
+  uploadedAt   DateTime?
+  
+  // Grading results
+  totalScore   Float?
+  maxScore     Float?
+  percentage   Float?
+  status       GradingStatus @default(PENDING)
+  
+  // AI grading task information
+  taskId       String?
+  
+  // Metadata
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  gradedAt  DateTime?
+  
+  // Relations
+  gradingSessionId String
+  gradingSession   GradingSession @relation(fields: [gradingSessionId], references: [id], onDelete: Cascade)
+  questionScores   QuestionScore[]
+  feedback         StudentFeedback[]
+
+  @@unique([gradingSessionId, name])
+  @@map("students")
+}
+
+model QuestionScore {
+  id         String @id @default(cuid())
+  questionId String // e.g., "q1", "q2a", "q2b"
+  score      Float
+  maxScore   Float
+  
+  // Metadata
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, questionId])
+  @@map("question_scores")
+}
+
+model StudentFeedback {
+  id         String       @id @default(cuid())
+  questionId String       // e.g., "q1", "q2a", "q2b"
+  feedback   String
+  type       FeedbackType @default(GENERAL)
+  
+  // Metadata
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, questionId, type])
+  @@map("student_feedback")
+}
+
+model SessionLog {
+  id        String   @id @default(cuid())
+  level     LogLevel
+  message   String
+  context   String?
+  studentId String?
+  
+  // Additional metadata
+  metadata  Json?
+  
+  // Timestamp
+  createdAt DateTime @default(now())
+  
+  // Relations
+  gradingSessionId String
+  gradingSession   GradingSession @relation(fields: [gradingSessionId], references: [id], onDelete: Cascade)
+  userId           String?
+  user             User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([gradingSessionId, createdAt])
+  @@index([level])
+  @@map("session_logs")
+}
+
+// Enums
+enum UserRole {
+  ADMIN
+  TEACHER
+  EXAMINER
+}
+
+enum SessionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum GradingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REQUIRES_REVIEW
+}
+
+enum LogLevel {
+  INFO
+  WARNING
+  ERROR
+  SUCCESS
+  DEBUG
+}
+
+enum FeedbackType {
+  GENERAL
+  STRENGTH
+  IMPROVEMENT
+  SUGGESTION
+}
