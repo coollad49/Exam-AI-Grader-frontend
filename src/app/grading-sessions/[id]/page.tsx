@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -62,24 +62,25 @@ interface GradingSessionDetail {
   }
 }
 
-export default function GradingSessionDetail({ params }: { params: { id: string } }) {
+export default function GradingSessionDetail() {
   const router = useRouter()
+  const params = useParams<{ id: string }>()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null)
   const [session, setSession] = useState<GradingSessionDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
+  const paramsId = params.id as string
   useEffect(() => {
     fetchSessionDetails()
-  }, [params.id])
+  }, [paramsId])
 
   const fetchSessionDetails = async () => {
     try {
       setLoading(true)
       setError(null)
       
-      const response = await fetch(`/api/sessions/${params.id}`)
+      const response = await fetch(`/api/sessions/${paramsId}`)
       if (!response.ok) {
         throw new Error(`Failed to fetch session: ${response.status}`)
       }
@@ -252,7 +253,7 @@ export default function GradingSessionDetail({ params }: { params: { id: string 
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6  border-2 p-6">
       <div className="flex flex-col gap-2">
         <Button variant="ghost" onClick={() => router.push("/grading-sessions")} className="w-fit">
           <ChevronLeft className="mr-2 h-4 w-4" />
@@ -329,7 +330,7 @@ export default function GradingSessionDetail({ params }: { params: { id: string 
 
         <TabsContent value="logs" className="mt-6">
           <SessionLogStream 
-            sessionId={params.id} 
+            sessionId={paramsId} 
             sessionStatus={session.status.toLowerCase() as "completed" | "in-progress" | "pending" | "failed"} 
           />
         </TabsContent>

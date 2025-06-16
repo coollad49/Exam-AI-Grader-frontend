@@ -75,7 +75,7 @@ export function SessionLogStream({ sessionId, sessionStatus }: SessionLogStreamP
     const connectWebSocket = () => {
       try {
         // Replace with your actual WebSocket endpoint
-        const ws = new WebSocket(`ws://localhost:8000/ws/session-logs/${sessionId}/`)
+        const ws = new WebSocket(`ws://localhost:8000/ws/grading-status/${sessionId}/`)
         wsRef.current = ws
 
         ws.onopen = () => {
