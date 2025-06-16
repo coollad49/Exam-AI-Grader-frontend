@@ -7,8 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { FileUp, Check, AlertCircle, X } from "lucide-react"
-import { useToast } from "@/hooks/use-toast"
-
+import { toast } from "sonner"
 interface Student {
   id: string
   name: string
@@ -23,7 +22,6 @@ interface StudentUploadStepProps {
 export function StudentUploadStep({ students, setStudents }: StudentUploadStepProps) {
   const [activeStudent, setActiveStudent] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { toast } = useToast()
 
   const handleNameChange = (id: string, name: string) => {
     setStudents(students.map((student) => (student.id === id ? { ...student, name } : student)))
@@ -31,10 +29,8 @@ export function StudentUploadStep({ students, setStudents }: StudentUploadStepPr
 
   const handleFileUpload = (id: string, file: File | null) => {
     if (file && file.type !== "application/pdf") {
-      toast({
-        title: "Invalid file type",
+      toast.error("Invalid file type", {
         description: "Please upload a PDF file only",
-        variant: "destructive",
       })
       return
     }
@@ -42,8 +38,7 @@ export function StudentUploadStep({ students, setStudents }: StudentUploadStepPr
     setStudents(students.map((student) => (student.id === id ? { ...student, file } : student)))
 
     if (file) {
-      toast({
-        title: "File uploaded",
+      toast.info("File uploaded", {
         description: `PDF uploaded for ${students.find((s) => s.id === id)?.name || "student"}`,
       })
     }

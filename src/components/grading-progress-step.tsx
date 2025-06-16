@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CheckCircle2, AlertCircle, Loader2, XCircle, Clock, Wifi, WifiOff } from "lucide-react"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 
 interface Student {
   id: string
@@ -53,7 +53,6 @@ export function GradingProgressStep({
   const [taskProgress, setTaskProgress] = useState<Record<string, TaskProgress>>({})
   const wsConnections = useRef<Record<string, WebSocket>>({})
   const pollingIntervals = useRef<Record<string, NodeJS.Timeout>>({})
-  const { toast } = useToast()
 
   // Initialize progress tracking for students with task IDs
   useEffect(() => {
@@ -184,8 +183,7 @@ export function GradingProgressStep({
         },
       }))
 
-      toast({
-        title: "Grading completed",
+      toast.success("Grading completed", {
         description: `Task ${taskId} completed successfully`,
       })
     }
@@ -201,10 +199,8 @@ export function GradingProgressStep({
         },
       }))
 
-      toast({
-        title: "Grading failed",
+      toast.error("Grading failed", {
         description: `Task ${taskId}: ${errorMessage}`,
-        variant: "destructive",
       })
     }
   }
@@ -247,8 +243,7 @@ export function GradingProgressStep({
             addLog(taskId, "Grading completed successfully", "success")
             clearInterval(pollingIntervals.current[taskId])
 
-            toast({
-              title: "Grading completed",
+            toast.success("Grading completed", {
               description: `${studentName}'s exam has been graded`,
             })
           }
@@ -267,10 +262,8 @@ export function GradingProgressStep({
             addLog(taskId, `Error: ${errorMessage}`, "error")
             clearInterval(pollingIntervals.current[taskId])
 
-            toast({
-              title: "Grading failed",
+            toast.error("Grading failed", {
               description: `${studentName}: ${errorMessage}`,
-              variant: "destructive",
             })
           }
         }
