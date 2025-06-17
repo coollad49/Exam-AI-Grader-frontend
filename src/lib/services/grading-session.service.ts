@@ -352,4 +352,79 @@ export class GradingSessionService {
       throw new Error("Failed to fetch user sessions")
     }
   }
+
+  static async checkAndUpdateSessionStatus(sessionId: string) {
+    try {
+      const session = await prisma.gradingSession.findUnique({
+        where: { id: sessionId },
+        include: {
+          students: {
+            select: {
+              status: true,
+            },
+          },
+        },
+      })
+
+      if (!session) {
+        throw new Error("Session not found")
+      }
+
+      const totalStudents = session.students.length
+      const completedStudents = session.students.filter(s => s.status === GradingStatus.COMPLETED).length
+      const failedStudents = session.students.filter(s => s.status === GradingStatus.FAILED).length
+      const processingStudents = session.students.filter(s => s.status === GradingStatus.PROCESSING).length
+
+      let newStatus = session.status
+
+      // Determine new status based on student completion
+      if (completedStudents === totalStudents && totalStudents > 0) {
+        // All students completed
+        newStatus = SessionStatus.COMPLETED
+      } else if (completedStudents + failedStudents === totalStudents && totalStudents > 0) {
+        // All students either completed or failed (no pending/in-progress)
+        newStatus = SessionStatus.COMPLETED
+      } else if (processingStudents > 0 || completedStudents > 0) {
+        // Some students are processing or completed
+        newStatus = SessionStatus.IN_PROGRESS
+      }
+
+      // Update session status if it changed
+      if (newStatus !== session.status) {
+        const updatedSession = await this.updateSessionStatus(sessionId, newStatus)
+        
+        // Calculate statistics if session is completed
+        if (newStatus === SessionStatus.COMPLETED) {
+          await this.calculateSessionStatistics(sessionId)
+        }
+
+        return updatedSession
+      }
+
+      return session
+    } catch (error) {
+      console.error("Error checking and updating session status:", error)
+      throw new Error("Failed to check and update session status")
+    }
+  }
+
+  static async getActiveSessionsForStatusCheck() {
+    try {
+      return await prisma.gradingSession.findMany({
+        where: {
+          status: {
+            in: [SessionStatus.PENDING, SessionStatus.IN_PROGRESS],
+          },
+        },
+        select: {
+          id: true,
+          status: true,
+          updatedAt: true,
+        },
+      })
+    } catch (error) {
+      console.error("Error fetching active sessions:", error)
+      throw new Error("Failed to fetch active sessions")
+    }
+  }
 }

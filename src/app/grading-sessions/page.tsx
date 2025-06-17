@@ -18,6 +18,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import Link from "next/link"
+import { toast } from "sonner"
 
 interface GradingSession {
   id: string
@@ -47,6 +48,7 @@ export default function GradingSessions() {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
   const [subjectFilter, setSubjectFilter] = useState("all")
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchSessions()
@@ -69,6 +71,42 @@ export default function GradingSessions() {
       setError(err instanceof Error ? err.message : "Failed to load sessions")
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDeleteSession = async (sessionId: string, sessionTitle: string) => {
+    if (!confirm(`Are you sure you want to delete "${sessionTitle}"? This action cannot be undone.`)) {
+      return
+    }
+
+    try {
+      setDeletingSessionId(sessionId)
+      
+      const response = await fetch(`/api/sessions/${sessionId}`, {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || `Failed to delete session: ${response.status}`)
+      }
+
+      const result = await response.json()
+      
+      // Remove the session from the local state
+      setSessions(prev => prev.filter(session => session.id !== sessionId))
+      
+      toast.success("Session deleted successfully", {
+        description: `"${sessionTitle}" and all its data have been permanently deleted.`
+      })
+      
+    } catch (err) {
+      console.error("Error deleting session:", err)
+      toast.error("Failed to delete session", {
+        description: err instanceof Error ? err.message : "An unexpected error occurred"
+      })
+    } finally {
+      setDeletingSessionId(null)
     }
   }
 
@@ -337,8 +375,12 @@ export default function GradingSessions() {
                                 </DropdownMenuItem>
                                 <DropdownMenuItem>Clone Session</DropdownMenuItem>
                                 <DropdownMenuSeparator />
-                                <DropdownMenuItem className="text-destructive">
-                                  Delete Session
+                                <DropdownMenuItem 
+                                  className="text-destructive"
+                                  onClick={() => handleDeleteSession(session.id, session.title)}
+                                  disabled={deletingSessionId === session.id}
+                                >
+                                  {deletingSessionId === session.id ? "Deleting..." : "Delete Session"}
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>

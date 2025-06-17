@@ -24,10 +24,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       validatedFeedback,
     )
 
-    // Calculate session statistics if student is completed
-    if (status === GradingStatus.COMPLETED) {
-      await GradingSessionService.calculateSessionStatistics(student.gradingSessionId)
-    }
+    // Check and update session status after student completion
+    await GradingSessionService.checkAndUpdateSessionStatus(student.gradingSessionId)
 
     return NextResponse.json(student)
   } catch (error) {

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CheckCircle2, AlertCircle, Loader2, XCircle, Clock, Wifi, WifiOff } from "lucide-react"
 import { toast } from "sonner"
+import { useSessionStatusPolling } from "@/hooks/use-session-status-polling"
 
 interface Student {
   id: string
@@ -27,6 +28,7 @@ interface GradingProgressStepProps {
   students: Student[]
   setStudents: React.Dispatch<React.SetStateAction<Student[]>>
   gradingStarted: boolean
+  sessionId?: string
 }
 
 interface LogEntry {
@@ -49,10 +51,36 @@ export function GradingProgressStep({
   students,
   setStudents,
   gradingStarted,
+  sessionId,
 }: GradingProgressStepProps) {
   const [taskProgress, setTaskProgress] = useState<Record<string, TaskProgress>>({})
+  const [sessionStatus, setSessionStatus] = useState<string>("PENDING")
   const wsConnections = useRef<Record<string, WebSocket>>({})
   const pollingIntervals = useRef<Record<string, NodeJS.Timeout>>({})
+
+  // Poll session status when grading is active
+  useSessionStatusPolling({
+    sessionId: sessionId || "",
+    enabled: gradingStarted && !!sessionId,
+    interval: 5000,
+    onStatusChange: (statusData) => {
+      setSessionStatus(statusData.status)
+      
+      if (statusData.status === "COMPLETED") {
+        toast.success("Grading Session Completed!", {
+          description: `All students have been graded. Session "${sessionConfig.examTitle}" is now complete.`,
+        })
+      } else if (statusData.status === "IN_PROGRESS" && sessionStatus === "PENDING") {
+        toast.info("Grading Session Started", {
+          description: "The grading process has begun for this session.",
+        })
+      }
+    },
+    onCompleted: () => {
+      console.log("Session completed, stopping individual task polling")
+      // Optionally stop individual task polling here
+    },
+  })
 
   // Initialize progress tracking for students with task IDs
   useEffect(() => {
@@ -212,45 +240,39 @@ export function GradingProgressStep({
 
     const pollStatus = async () => {
       try {
-        const response = await fetch(`/api/grade/status/${taskId}/`)
+        // Use the enhanced task checking endpoint that also updates the database
+        const response = await fetch(`/api/tasks/${taskId}/check`)
         if (response.ok) {
           const data = await response.json()
+          const taskResult = data.result
+          
+          if (taskResult && taskResult.updated) {
+            // Status was updated in the database, fetch latest from backend
+            addLog(taskId, `Status updated to ${taskResult.status}`, "info")
+          }
 
+          // Update local state
           setTaskProgress((prev) => ({
             ...prev,
             [taskId]: {
               ...prev[taskId],
-              status: data.status,
+              status: taskResult?.status || prev[taskId]?.status || "PENDING",
               lastUpdate: new Date().toISOString(),
             },
           }))
 
-          // Add progress log if available
-          if (data.progress?.message) {
-            addLog(taskId, data.progress.message, "info")
-          }
-
           // Handle completion
-          if (data.status === "SUCCESS" && data.result) {
-            setTaskProgress((prev) => ({
-              ...prev,
-              [taskId]: {
-                ...prev[taskId],
-                result: data.result,
-              },
-            }))
-
-            addLog(taskId, "Grading completed successfully", "success")
+          if (taskResult?.status === "COMPLETED") {
             clearInterval(pollingIntervals.current[taskId])
-
+            addLog(taskId, "Grading completed successfully", "success")
             toast.success("Grading completed", {
               description: `${studentName}'s exam has been graded`,
             })
           }
 
           // Handle failure
-          if (data.status === "FAILURE") {
-            const errorMessage = data.error || "Unknown error occurred"
+          if (taskResult?.status === "FAILED") {
+            const errorMessage = taskResult.error || "Grading failed"
             setTaskProgress((prev) => ({
               ...prev,
               [taskId]: {
@@ -266,6 +288,63 @@ export function GradingProgressStep({
               description: `${studentName}: ${errorMessage}`,
             })
           }
+        } else {
+          // Fallback to original status endpoint if new one fails
+          const fallbackResponse = await fetch(`/api/grade/status/${taskId}/`)
+          if (fallbackResponse.ok) {
+            const data = await fallbackResponse.json()
+
+            setTaskProgress((prev) => ({
+              ...prev,
+              [taskId]: {
+                ...prev[taskId],
+                status: data.status,
+                lastUpdate: new Date().toISOString(),
+              },
+            }))
+
+            // Add progress log if available
+            if (data.progress?.message) {
+              addLog(taskId, data.progress.message, "info")
+            }
+
+            // Handle completion
+            if (data.status === "SUCCESS" && data.result) {
+              setTaskProgress((prev) => ({
+                ...prev,
+                [taskId]: {
+                  ...prev[taskId],
+                  result: data.result,
+                },
+              }))
+
+              addLog(taskId, "Grading completed successfully", "success")
+              clearInterval(pollingIntervals.current[taskId])
+
+              toast.success("Grading completed", {
+                description: `${studentName}'s exam has been graded`,
+              })
+            }
+
+            // Handle failure
+            if (data.status === "FAILURE") {
+              const errorMessage = data.error || "Unknown error occurred"
+              setTaskProgress((prev) => ({
+                ...prev,
+                [taskId]: {
+                  ...prev[taskId],
+                  error: errorMessage,
+                },
+              }))
+
+              addLog(taskId, `Error: ${errorMessage}`, "error")
+              clearInterval(pollingIntervals.current[taskId])
+
+              toast.error("Grading failed", {
+                description: `${studentName}: ${errorMessage}`,
+              })
+            }
+          }
         }
       } catch (error) {
         console.error("Polling error:", error)
@@ -273,8 +352,8 @@ export function GradingProgressStep({
       }
     }
 
-    // Poll every 2 seconds
-    pollingIntervals.current[taskId] = setInterval(pollStatus, 2000)
+    // Poll every 3 seconds (slightly longer since we're doing more work)
+    pollingIntervals.current[taskId] = setInterval(pollStatus, 3000)
 
     // Initial poll
     pollStatus()
@@ -421,11 +500,18 @@ export function GradingProgressStep({
       <div className="rounded-md border bg-blue-50 p-4">
         <div className="flex items-start gap-3">
           <Loader2 className="mt-0.5 h-5 w-5 text-blue-500 animate-spin" />
-          <div>
+          <div className="flex-1">
             <h4 className="text-sm font-medium">Grading in Progress</h4>
             <p className="text-sm text-muted-foreground">
               Real-time monitoring of grading progress for each student. This may take several minutes per exam.
             </p>
+            {sessionId && (
+              <div className="mt-2 flex items-center gap-2">
+                <Badge variant={sessionStatus === "COMPLETED" ? "default" : "secondary"}>
+                  Session Status: {sessionStatus}
+                </Badge>
+              </div>
+            )}
           </div>
         </div>
       </div>

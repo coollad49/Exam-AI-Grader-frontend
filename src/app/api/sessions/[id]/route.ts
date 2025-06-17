@@ -66,3 +66,93 @@ export async function PATCH(
     return NextResponse.json({ error: "Failed to update session" }, { status: 500 })
   }
 }
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params
+
+    if (!id) {
+      return NextResponse.json({ error: "Session ID is required" }, { status: 400 })
+    }
+
+    // Check if session exists
+    const session = await prisma.gradingSession.findUnique({
+      where: { id },
+      include: {
+        students: true,
+        _count: {
+          select: {
+            students: true,
+            logs: true
+          }
+        }
+      }
+    })
+
+    if (!session) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 })
+    }
+
+    // Delete all related data in the correct order (respecting foreign key constraints)
+    await prisma.$transaction(async (tx) => {
+      // Delete student feedback
+      await tx.studentFeedback.deleteMany({
+        where: {
+          student: {
+            gradingSessionId: id
+          }
+        }
+      })
+
+      // Delete question scores
+      await tx.questionScore.deleteMany({
+        where: {
+          student: {
+            gradingSessionId: id
+          }
+        }
+      })
+
+      // Delete session logs
+      await tx.sessionLog.deleteMany({
+        where: {
+          gradingSessionId: id
+        }
+      })
+
+      // Delete students
+      await tx.student.deleteMany({
+        where: {
+          gradingSessionId: id
+        }
+      })
+
+      // Finally delete the session itself
+      await tx.gradingSession.delete({
+        where: { id }
+      })
+    })
+
+    return NextResponse.json({
+      message: "Session deleted successfully",
+      deletedSession: {
+        id: session.id,
+        title: session.title,
+        studentsCount: session._count.students,
+        logsCount: session._count.logs
+      }
+    })
+  } catch (error) {
+    console.error("Error deleting session:", error)
+    return NextResponse.json(
+      { 
+        error: "Failed to delete session",
+        details: error instanceof Error ? error.message : "Unknown error"
+      }, 
+      { status: 500 }
+    )
+  }
+}

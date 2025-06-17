@@ -14,7 +14,9 @@ import { SessionOverview } from "@/components/session-overview"
 import { StudentResults } from "@/components/student-results"
 import { StudentDetailModal } from "@/components/student-detail-modal"
 import { SessionLogStream } from "@/components/session-log-stream"
+import { useSessionStatusPolling } from "@/hooks/use-session-status-polling"
 
+import { toast } from "sonner"
 interface GradingSessionDetail {
   id: string
   title: string
@@ -71,6 +73,26 @@ export default function GradingSessionDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const paramsId = params.id as string
+  // Poll session status to keep data fresh
+  useSessionStatusPolling({
+    sessionId: paramsId,
+    enabled: !!session && (session.status === "PENDING" || session.status === "IN_PROGRESS"),
+    interval: 10000, // Poll every 10 seconds for session detail page
+    onStatusChange: (statusData) => {
+      if (statusData.status !== session?.status) {
+        // Refresh session data when status changes
+        fetchSessionDetails()
+      }
+    },
+    onCompleted: () => {
+      // Refresh data when session completes
+      fetchSessionDetails()
+      toast.success("Grading completed!", {
+        description: "All students have been graded successfully.",
+      })
+    },
+  })
+
   useEffect(() => {
     fetchSessionDetails()
   }, [paramsId])
@@ -151,22 +173,41 @@ export default function GradingSessionDetail() {
   const transformStudentForModal = (student: any) => {
     if (!student) return null
     
-    // Convert feedback array to object format expected by modal
-    const feedbackObj: { [key: string]: { score: number; feedback: string } } = {}
+    // Convert feedback and scores to a more detailed format
+    const questionData: { [key: string]: { score: number; maxScore: number; feedback: string } } = {}
+    
+    // First, populate with question scores
     student.questionScores?.forEach((score: any) => {
-      const feedback = student.feedback?.find((f: any) => f.questionId === score.questionId)
-      feedbackObj[score.questionId] = {
+      questionData[score.questionId] = {
         score: score.score,
-        feedback: feedback?.feedback || "No feedback available"
+        maxScore: score.maxScore,
+        feedback: "No feedback available"
+      }
+    })
+    
+    // Then, add feedback data
+    student.feedback?.forEach((feedback: any) => {
+      if (questionData[feedback.questionId]) {
+        questionData[feedback.questionId].feedback = feedback.feedback
+      } else {
+        // If we have feedback but no score, create an entry
+        questionData[feedback.questionId] = {
+          score: 0,
+          maxScore: 10, // Default max score
+          feedback: feedback.feedback
+        }
       }
     })
 
     return {
       id: student.id,
       name: student.name,
-      score: student.percentage || 0,
+      totalScore: student.totalScore || 0,
+      maxScore: student.maxScore || 0,
+      percentage: student.percentage || 0,
       status: student.status,
-      feedback: feedbackObj
+      gradedAt: student.gradedAt,
+      questionData: questionData
     }
   }
 
@@ -285,7 +326,105 @@ export default function GradingSessionDetail() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-6">
-          {transformedSession && <SessionOverview session={transformedSession} />}
+          <div className="grid gap-6 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Session Information</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Subject</Label>
+                    <p className="text-sm font-medium">{session.subject}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Exam Year</Label>
+                    <p className="text-sm font-medium">{session.examYear}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Total Students</Label>
+                    <p className="text-sm font-medium">{session._count.students}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Status</Label>
+                    <Badge variant={session.status === "COMPLETED" ? "default" : "secondary"}>
+                      {formatStatus(session.status)}
+                    </Badge>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Created</Label>
+                    <p className="text-sm font-medium">{formatDate(session.createdAt)}</p>
+                  </div>
+                  {session.completedAt && (
+                    <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Completed</Label>
+                      <p className="text-sm font-medium">{formatDate(session.completedAt)}</p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Student Progress</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {/* Progress by status */}
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm">Completed</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">
+                        {session.students.filter(s => s.status === 'COMPLETED').length}
+                      </span>
+                      <Badge variant="default" className="bg-green-500">
+                        {Math.round((session.students.filter(s => s.status === 'COMPLETED').length / session.students.length) * 100)}%
+                      </Badge>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm">Processing</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">
+                        {session.students.filter(s => s.status === 'PROCESSING').length}
+                      </span>
+                      <Badge variant="secondary">
+                        {Math.round((session.students.filter(s => s.status === 'PROCESSING').length / session.students.length) * 100)}%
+                      </Badge>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm">Pending</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">
+                        {session.students.filter(s => s.status === 'PENDING').length}
+                      </span>
+                      <Badge variant="outline">
+                        {Math.round((session.students.filter(s => s.status === 'PENDING').length / session.students.length) * 100)}%
+                      </Badge>
+                    </div>
+                  </div>
+                  
+                  {session.students.some(s => s.status === 'FAILED') && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm">Failed</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">
+                          {session.students.filter(s => s.status === 'FAILED').length}
+                        </span>
+                        <Badge variant="destructive">
+                          {Math.round((session.students.filter(s => s.status === 'FAILED').length / session.students.length) * 100)}%
+                        </Badge>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="students" className="mt-6">

@@ -401,6 +401,7 @@ export default function NewGradingSession() {
               students={students}
               setStudents={setStudents}
               gradingStarted={gradingStarted}
+              sessionId={sessionId || undefined}
             />
           )}
         </CardContent>
