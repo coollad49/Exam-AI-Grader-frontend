@@ -78,7 +78,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Session ID is required" }, { status: 400 })
     }
 
-    // Check if session exists
+    // Check if session existse
     const session = await prisma.gradingSession.findUnique({
       where: { id },
       include: {
@@ -99,22 +99,22 @@ export async function DELETE(
     // Delete all related data in the correct order (respecting foreign key constraints)
     await prisma.$transaction(async (tx) => {
       // Delete student feedback
-      await tx.studentFeedback.deleteMany({
-        where: {
-          student: {
-            gradingSessionId: id
-          }
-        }
-      })
+      // await tx.studentFeedback.deleteMany({
+      //   where: {
+      //     student: {
+      //       gradingSessionId: id
+      //     }
+      //   }
+      // })
 
-      // Delete question scores
-      await tx.questionScore.deleteMany({
-        where: {
-          student: {
-            gradingSessionId: id
-          }
-        }
-      })
+      // // Delete question scores
+      // await tx.questionScore.deleteMany({
+      //   where: {
+      //     student: {
+      //       gradingSessionId: id
+      //     }
+      //   }
+      // })
 
       // Delete session logs
       await tx.sessionLog.deleteMany({

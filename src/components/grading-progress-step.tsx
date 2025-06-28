@@ -8,10 +8,12 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { CheckCircle2, AlertCircle, Loader2, XCircle, Clock, Wifi, WifiOff } from "lucide-react"
 import { toast } from "sonner"
 import { useSessionStatusPolling } from "@/hooks/use-session-status-polling"
+import { TaskLogStream } from "@/components/task-log-stream"
 
 interface Student {
   id: string
-  name: string
+  studentId: string
+  studentName: string
   file: File | null
   taskId?: string
   status?: string
@@ -103,7 +105,7 @@ export function GradingProgressStep({
         }))
 
         // Start WebSocket connection
-        connectWebSocket(student.taskId, student.name)
+        connectWebSocket(student.taskId, student.studentName)
       }
     })
 
@@ -210,6 +212,49 @@ export function GradingProgressStep({
           result: details.results,
         },
       }))
+
+      // Find the studentId for this taskId
+      const student = students.find((s) => s.taskId === taskId)
+      if (student) {
+        // Parse results into scores and feedback arrays
+        const scores = []
+        const feedback = []
+        for (const [questionId, resRaw] of Object.entries(details.results)) {
+          const res = resRaw as {
+            score: number
+            feedback: string
+            max_score?: number
+            page_source?: number
+            confidence?: number
+            keywords?: string[]
+          }
+          scores.push({
+            questionId,
+            score: res.score,
+            maxScore: res.max_score || 0,
+          })
+          feedback.push({
+            questionId,
+            feedback: res.feedback,
+            score: res.score,
+            maxScore: res.max_score || 0,
+            type: "GENERAL",
+            confidence: res.confidence || null,
+            keywords: res.keywords || [],
+          })
+        }
+        // Send to backend for storage
+        fetch(`/api/students/${student.id}/grading`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            taskId,
+            status: "COMPLETED",
+            scores,
+            feedback,
+          }),
+        })
+      }
 
       toast.success("Grading completed", {
         description: `Task ${taskId} completed successfully`,
@@ -479,7 +524,7 @@ export function GradingProgressStep({
                       <AlertCircle className="h-5 w-5 text-amber-500" />
                     )}
                     <div className="flex-1 truncate">
-                      <p className="font-medium truncate">{student.name || `Student ${index + 1}`}</p>
+                      <p className="font-medium truncate">{student.studentId || `Student ${index + 1}`}</p>
                       <p className="text-xs text-muted-foreground">
                         {student.file ? "PDF uploaded" : "No PDF uploaded"}
                       </p>
@@ -533,7 +578,7 @@ export function GradingProgressStep({
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-lg flex items-center gap-2">
                     {getStatusIcon(progress.status)}
-                    {student.name}
+                    {student.studentId}
                   </CardTitle>
                   <div className="flex items-center gap-2">
                     {progress.wsConnected ? (
@@ -552,48 +597,47 @@ export function GradingProgressStep({
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  <div>
-                    <h4 className="text-sm font-medium mb-2">Progress Log</h4>
-                    <ScrollArea className="h-32 w-full rounded-md border bg-muted/20 p-3">
-                      <div className="space-y-1">
-                        {progress.logs.map((log, index) => (
-                          <div key={index} className="flex items-start gap-2 text-xs">
-                            <span className="text-muted-foreground font-mono">{log.timestamp}</span>
-                            <span
-                              className={
-                                log.type === "error"
-                                  ? "text-red-600"
-                                  : log.type === "success"
-                                    ? "text-green-600"
-                                    : log.type === "warning"
-                                      ? "text-amber-600"
-                                      : "text-foreground"
-                              }
-                            >
-                              {log.message}
-                            </span>
-                          </div>
-                        ))}
-                        {progress.logs.length === 0 && (
-                          <div className="text-xs text-muted-foreground">Waiting for updates...</div>
-                        )}
-                      </div>
-                    </ScrollArea>
-                  </div>
-
+                  {/* Show task log stream for this student's grading task */}
+                  <TaskLogStream taskId={student.taskId} status={progress.status.toLowerCase() as any} />
                   {progress.error && (
                     <div className="rounded-md border border-red-200 bg-red-50 p-3">
                       <h4 className="text-sm font-medium text-red-800 mb-1">Error Details</h4>
                       <p className="text-sm text-red-700">{progress.error}</p>
                     </div>
                   )}
-
                   {progress.result && (
                     <div className="rounded-md border border-green-200 bg-green-50 p-3">
                       <h4 className="text-sm font-medium text-green-800 mb-1">Grading Results</h4>
-                      <pre className="text-xs text-green-700 overflow-x-auto">
-                        {JSON.stringify(progress.result, null, 2)}
-                      </pre>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-xs">
+                          <thead>
+                            <tr>
+                              <th className="px-2 py-1 text-left">Question</th>
+                              <th className="px-2 py-1 text-left">Score</th>
+                              <th className="px-2 py-1 text-left">Feedback</th>
+                              <th className="px-2 py-1 text-left">Page</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {Object.entries(progress.result).map(([qid, resRaw]: any) => {
+                              const res = resRaw as {
+                                score: number
+                                feedback: string
+                                max_score?: number
+                                page_source?: number
+                              }
+                              return (
+                                <tr key={qid}>
+                                  <td className="px-2 py-1 font-mono">{qid}</td>
+                                  <td className="px-2 py-1">{res.score}</td>
+                                  <td className="px-2 py-1">{res.feedback}</td>
+                                  <td className="px-2 py-1">{res.page_source ?? "-"}</td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </div>

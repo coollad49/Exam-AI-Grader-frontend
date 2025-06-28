@@ -34,7 +34,8 @@ export default function NewGradingSession() {
   const [students, setStudents] = useState<
     Array<{
       id: string
-      name: string
+      studentName: string
+      studentId: string
       file: File | null
       taskId?: string
       status?: string
@@ -126,7 +127,8 @@ export default function NewGradingSession() {
       if (students.length === 0 || students.length !== sessionConfig.numStudents) {
         const newStudents = Array.from({ length: sessionConfig.numStudents }, (_, i) => ({
           id: `student-${i + 1}`, // Temporary client ID, will be replaced with DB ID
-          name: "",
+          studentId: "",
+          studentName: "",
           file: null,
         }))
         setStudents(newStudents)
@@ -137,10 +139,10 @@ export default function NewGradingSession() {
 
     if (step === 2) {
       // Validate step 2
-      const allStudentsValid = students.every((student) => student.name && student.file)
+      const allStudentsValid = students.every((student) => student.studentId && student.studentName && student.file)
       if (!allStudentsValid) {
         toast.error("Missing information", {
-          description: "Please provide name and upload exam PDF for all students",
+          description: "Please provide id, name and upload exam PDF for all students",
         })
         return
       }
@@ -163,7 +165,8 @@ export default function NewGradingSession() {
         
         // Add student metadata as JSON
         const studentData = students.map(student => ({
-          name: student.name,
+          studentId: student.studentId,
+          studentName: student.studentName,
           tempId: student.id // Send the temporary ID for matching
         }))
         formData.append("students", JSON.stringify(studentData))
@@ -191,7 +194,7 @@ export default function NewGradingSession() {
         // Update our students array with the real database IDs
         const updatedStudents = students.map(student => {
           const dbStudent = createdStudents.find(
-            (s: any) => s.tempId === student.id || s.name === student.name
+            (s: any) => s.tempId === student.id || s.studentId === student.studentId
           )
           
           return {
@@ -266,9 +269,9 @@ export default function NewGradingSession() {
               }
             } catch (e) {
               // Non-JSON response or parsing error, stick with the status code message
-              console.warn(`Could not parse error response body for status ${response.status} for ${student.name}`)
+              console.warn(`Could not parse error response body for status ${response.status} for ${student.studentId}`)
             }
-            toast.error(`Error for ${student.name || `Student ${i + 1}`}`,{
+            toast.error(`Error for ${student.studentId || `Student ${i + 1}`}`,{
               description: errorDescription,
             })
             updatedStudents[i] = { ...student, status: "Error", taskId: undefined }
@@ -298,7 +301,7 @@ export default function NewGradingSession() {
                     const errorData = await studentUpdateResponse.json().catch(() => ({}))
                     console.error(`Failed to update student ${student.id} in DB:`, errorData.error || studentUpdateResponse.statusText);
                     // Optionally, show a specific toast for this failure
-                    toast.error(`DB Update Failed for ${student.name || `Student ${i + 1}`}`, {
+                    toast.error(`DB Update Failed for ${student.studentId || `Student ${i + 1}`}`, {
                       description: `Could not save Task ID to database: ${errorData.error || studentUpdateResponse.statusText}`,
                     })
                     // Decide if this should revert anyTaskSuccessfullyStarted or mark student differently
@@ -307,20 +310,20 @@ export default function NewGradingSession() {
               } catch (dbError) {
                 console.error(`Error updating student ${student.id} in DB:`, dbError);
                 toast.error(`Network Error During DB Update`, {
-                  description: `Could not save Task ID for ${student.name || `Student ${i + 1}`} to database.`,
+                  description: `Could not save Task ID for ${student.studentId || `Student ${i + 1}`} to database.`,
                 })
               }
             } else {
-              console.warn(`Student ID or Task ID missing for student ${student.name}, cannot update DB.`);
+              console.warn(`Student ID or Task ID missing for student ${student.studentId}, cannot update DB.`);
             }
 
-            toast.info(`Grading initiated for ${student.name || `Student ${i + 1}`}`, {
+            toast.info(`Grading initiated for ${student.studentId || `Student ${i + 1}`}`, {
               description: `Task ID: ${result.task_id}`,
             })
           }
         } catch (error: any) { // Catch network errors or other issues with fetch
           console.error(`Network or unexpected error for student ${student.id}:`, error)
-          toast.error(`Error for ${student.name || `Student ${i + 1}`}`, {
+          toast.error(`Error for ${student.studentId || `Student ${i + 1}`}`, {
             description: error.message || "A network error occurred, or the server might be offline. Please try again.",
           })
           updatedStudents[i] = { ...student, status: "Error - Network", taskId: undefined }

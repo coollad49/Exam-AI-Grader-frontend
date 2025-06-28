@@ -5,89 +5,88 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Wifi, WifiOff, Download, PauseCircle, PlayCircle, AlertCircle, CheckCircle, XCircle } from "lucide-react"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 interface LogEntry {
-  taskId?: string
-  studentName?: string
   timestamp: string
   message: string
   level: "info" | "warning" | "error" | "success"
   context?: string
   details?: any
-  studentId?: string
 }
 
-interface TaskLog {
+interface TaskLogStreamProps {
   taskId: string
-  studentName?: string
+  status: "completed" | "in-progress" | "pending" | "failed"
 }
 
-interface SessionLogStreamProps {
-  tasks: TaskLog[]
-  sessionStatus: "completed" | "in-progress" | "pending" | "failed"
-}
-
-export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps) {
+export function TaskLogStream({ taskId, status }: TaskLogStreamProps) {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [isConnected, setIsConnected] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
-  const [activeTab, setActiveTab] = useState<string>("all")
-  const [activeStudent, setActiveStudent] = useState<string | null>(null)
-  const wsRefs = useRef<Record<string, WebSocket | null>>({})
+  const [activeTab, setActiveTab] = useState<"all" | "errors" | "system">("all")
+  const wsRef = useRef<WebSocket | null>(null)
   const logContainerRef = useRef<HTMLDivElement>(null)
   const pausedLogsRef = useRef<LogEntry[]>([])
-  const shouldConnectToWebSocket = sessionStatus === "in-progress" || sessionStatus === "pending"
 
+  const shouldConnectToWebSocket = status === "in-progress" || status === "pending"
 
-  // Helper to fetch logs for a single task
-  const fetchTaskLogs = async (taskId: string) => {
-    try {
-      const response = await fetch(`/api/grade/status/${taskId}/logs`)
-      if (response.ok) {
-        const taskLogs = await response.json()
-        return taskLogs.map((log: any) => ({
-          ...log,
-          timestamp: new Date(log.timestamp).toLocaleTimeString(),
-          taskId,
-        }))
-      }
-    } catch (e) {
-      console.error("Failed to fetch task logs:", e)
-    }
-    return []
-  }
-
-  // Load historical logs for completed sessions
   useEffect(() => {
-    if (sessionStatus === "completed") {
-      (async () => {
-        let allLogs: LogEntry[] = []
-        for (const task of tasks) {
-          const taskLogs = await fetchTaskLogs(task.taskId)
-          // Attach studentName to each log
-          allLogs = allLogs.concat(taskLogs.map((log: LogEntry) => ({ ...log, studentName: task.studentName })))
+    if (status === "completed") {
+      const loadHistoricalLogs = async () => {
+        try {
+          const response = await fetch(`/api/tasks/${taskId}/logs`)
+          if (response.ok) {
+            const historicalLogs = await response.json()
+            setLogs(
+              historicalLogs.map((log: any) => ({
+                ...log,
+                timestamp: new Date(log.timestamp).toLocaleTimeString(),
+              }))
+            )
+          }
+        } catch (error) {
+          setLogs([
+            {
+              timestamp: new Date().toLocaleTimeString(),
+              message: "Task completed - historical logs not available",
+              level: "info",
+              context: "system",
+            },
+          ])
         }
-        setLogs(allLogs)
-      })()
+      }
+      loadHistoricalLogs()
       return
     }
-  }, [tasks, sessionStatus])
+  }, [taskId, status])
 
-  // Connect to WebSocket for real-time logs (only for active sessions)
   useEffect(() => {
-    if (!(sessionStatus === "in-progress" || sessionStatus === "pending")) return
-    // Open a WebSocket for each task
-    tasks.forEach((task) => {
-      if (wsRefs.current[task.taskId]) return // already connected
+
+    if (!shouldConnectToWebSocket) return
+    console.log("connecting to webSocket")
+
+    const connectWebSocket = () => {
       try {
-        const ws = new WebSocket(`ws://localhost:8000/ws/grading-status/${task.taskId}/`)
-        wsRefs.current[task.taskId] = ws
-        ws.onopen = () => setIsConnected(true)
+        const ws = new WebSocket(`ws://localhost:8000/ws/grading-status/${taskId}/`)
+        wsRef.current = ws
+        ws.onopen = () => {
+          setIsConnected(true)
+          setLogs((prev) => [
+            ...prev,
+            {
+              timestamp: new Date().toISOString(),
+              message: "Connected to log stream",
+              level: "success",
+              context: "system",
+            },
+          ])
+        }
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data)
+            // Support both old and new formats
             let logEntry: LogEntry
             if (data.status && data.timestamp && data.message) {
               // New backend format
@@ -97,16 +96,12 @@ export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps
                 level: getLevelFromStatus(data.status),
                 context: data.status,
                 details: data.details,
-                taskId: task.taskId,
-                studentName: task.studentName,
               }
             } else {
               // Fallback to old format
               logEntry = {
                 ...data,
                 timestamp: data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString(),
-                taskId: task.taskId,
-                studentName: task.studentName,
               }
             }
             if (isPaused) {
@@ -114,33 +109,52 @@ export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps
             } else {
               setLogs((prev) => [...prev, logEntry])
             }
-          } catch (error) {
-            console.error("Error parsing log message:", error)
-          }
+          } catch {}
         }
-        ws.onclose = () => setIsConnected(false)
-        ws.onerror = () => setIsConnected(false)
-      } catch (error) {
-        console.error("Failed to establish WebSocket connection:", error)
+        ws.onclose = () => {
+          setIsConnected(false)
+          setLogs((prev) => [
+            ...prev,
+            {
+              timestamp: new Date().toISOString(),
+              message: "Disconnected from log stream",
+              level: "warning",
+              context: "system",
+            },
+          ])
+          setTimeout(connectWebSocket, 3000)
+        }
+        ws.onerror = () => {
+          setIsConnected(false)
+          setLogs((prev) => [
+            ...prev,
+            {
+              timestamp: new Date().toISOString(),
+              message: "Connection error",
+              level: "error",
+              context: "system",
+            },
+          ])
+        }
+        return ws
+      } catch {
+        return null
       }
-    })
-    // Cleanup
-    return () => {
-      Object.values(wsRefs.current).forEach((ws) => {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.close()
-      })
-      wsRefs.current = {}
     }
-  }, [tasks, sessionStatus, isPaused])
+    const ws = connectWebSocket()
+    return () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close()
+      }
+    }
+  }, [taskId, shouldConnectToWebSocket])
 
-  // Auto-scroll to bottom of logs unless paused
   useEffect(() => {
     if (!isPaused && logContainerRef.current) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
     }
   }, [logs, isPaused])
 
-  // Pause/resume logic
   const togglePause = () => {
     if (isPaused) {
       setLogs((prev) => [...prev, ...pausedLogsRef.current])
@@ -149,55 +163,41 @@ export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps
     setIsPaused(!isPaused)
   }
 
-  // Filtering/grouping
-  const students = Array.from(new Set(tasks.map((t) => t.studentName).filter(Boolean)))
   const filteredLogs = logs.filter((log) => {
-    if (activeTab === "all") return !activeStudent || log.studentName === activeStudent
-    if (activeTab === "errors") return (log.level === "error" || log.level === "warning") && (!activeStudent || log.studentName === activeStudent)
-    if (activeTab === "system") return log.context === "system" && (!activeStudent || log.studentName === activeStudent)
+    if (activeTab === "all") return true
+    if (activeTab === "errors") return log.level === "error" || log.level === "warning"
+    if (activeTab === "system") return log.context === "system"
     return true
   })
 
-  // Download logs as text file
   const downloadLogs = () => {
     const logText = logs.map((log) => `[${log.timestamp}] [${log.level.toUpperCase()}] ${log.message}`).join("\n")
-
     const blob = new Blob([logText], { type: "text/plain" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `session-logs.txt`
+    a.download = `task-${taskId}-logs.txt`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }
 
-  // Get log entry style based on level
   const getLogStyle = (level: string) => {
     switch (level) {
-      case "error":
-        return "text-red-600"
-      case "warning":
-        return "text-amber-600"
-      case "success":
-        return "text-green-600"
-      default:
-        return "text-blue-600"
+      case "error": return "text-red-600"
+      case "warning": return "text-amber-600"
+      case "success": return "text-green-600"
+      default: return "text-blue-600"
     }
   }
 
-  // Get log icon based on level
   const getLogIcon = (level: string) => {
     switch (level) {
-      case "error":
-        return <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
-      case "warning":
-        return <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0" />
-      case "success":
-        return <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
-      default:
-        return <CheckCircle className="h-4 w-4 text-blue-500 flex-shrink-0" />
+      case "error": return <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+      case "warning": return <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0" />
+      case "success": return <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
+      default: return <CheckCircle className="h-4 w-4 text-blue-500 flex-shrink-0" />
     }
   }
 
@@ -213,9 +213,9 @@ export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-lg">All Task Logs</CardTitle>
+        <CardTitle className="text-lg">Task Logs</CardTitle>
         <div className="flex items-center gap-2">
-          {sessionStatus === "completed" ? (
+          {status === "completed" ? (
             <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">
               <CheckCircle className="mr-1 h-3 w-3" /> Completed
             </Badge>
@@ -228,22 +228,6 @@ export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps
               <WifiOff className="mr-1 h-3 w-3" /> Disconnected
             </Badge>
           )}
-
-          {students.length > 1 && (
-            <select
-              className="border rounded px-2 py-1 text-sm"
-              value={activeStudent || ""}
-              onChange={(e) => setActiveStudent(e.target.value || null)}
-            >
-              <option value="">All Students</option>
-              {students.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          )}
-
           {shouldConnectToWebSocket && (
             <Button variant="outline" size="sm" onClick={togglePause}>
               {isPaused ? (
@@ -257,39 +241,37 @@ export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps
               )}
             </Button>
           )}
-
           <Button variant="outline" size="sm" onClick={downloadLogs}>
             <Download className="mr-1 h-4 w-4" /> Export
           </Button>
         </div>
       </CardHeader>
       <CardContent>
-        {sessionStatus === "completed" && (
+        {status === "completed" && (
           <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3">
             <div className="flex items-start gap-2">
               <CheckCircle className="mt-0.5 h-4 w-4 text-blue-600 flex-shrink-0" />
               <div className="text-sm">
-                <p className="font-medium text-blue-800">Session Completed</p>
+                <p className="font-medium text-blue-800">Task Completed</p>
                 <p className="text-blue-700">
-                  This session has finished processing. Showing historical logs from the grading process.
+                  This grading task has finished processing. Showing historical logs from the grading process.
                 </p>
               </div>
             </div>
           </div>
         )}
-
-        <Tabs defaultValue="all" onValueChange={setActiveTab}>
+        <Tabs defaultValue="all" onValueChange={(value) => setActiveTab(value as any)}>
           <TabsList className="mb-2">
             <TabsTrigger value="all">All Logs</TabsTrigger>
             <TabsTrigger value="errors">Errors</TabsTrigger>
             <TabsTrigger value="system">System</TabsTrigger>
           </TabsList>
           <div className="relative">
-            <ScrollArea className="h-[300px] border rounded-md bg-muted/20" ref={logContainerRef}>
+            <ScrollArea className="h-[400px] border rounded-md bg-muted/20" ref={logContainerRef}>
               <div className="p-3 space-y-1">
                 {filteredLogs.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
-                    {sessionStatus === "completed" ? "No historical logs available" : "No logs available"}
+                    {status === "completed" ? "No historical logs available" : "No logs available"}
                   </div>
                 ) : (
                   filteredLogs.map((log, index) => (
@@ -302,9 +284,6 @@ export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps
                             <span className="inline-block mr-1 px-1 py-0.5 rounded bg-gray-100 border text-gray-700 text-[10px] font-semibold align-middle">{log.context}</span>
                           )}
                           {log.message}
-                          {log.studentName && (
-                            <span className="ml-1 text-muted-foreground">({log.studentName})</span>
-                          )}
                         </span>
                       </div>
                       {log.details && (

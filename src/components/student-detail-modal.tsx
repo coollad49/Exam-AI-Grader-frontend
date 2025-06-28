@@ -23,7 +23,7 @@ interface StudentDetailModalProps {
     totalScore: number
     maxScore: number
     percentage: number
-    status: string
+    studentGradingStatus: string
     gradedAt?: string
     questionData: {
       [key: string]: {
@@ -91,9 +91,9 @@ export function StudentDetailModal({ student, onClose }: StudentDetailModalProps
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             <span>{student.name}</span>
-            {getStatusIcon(student.status)}
-            <Badge variant={getStatusVariant(student.status)}>
-              {student.status}
+            {getStatusIcon(student.studentGradingStatus)}
+            <Badge variant={getStatusVariant(student.studentGradingStatus)}>
+              {student.studentGradingStatus}
             </Badge>
             <Badge variant="outline" className={getScoreColor(student.percentage)}>
               {student.percentage.toFixed(1)}%

@@ -5,7 +5,7 @@ import Link from "next/link"
 
 export function DashboardHeader() {
   return (
-    <Card className="border-none shadow-none">
+    <Card className="border-none shadow-none p-4">
       <CardContent className="flex flex-col gap-4 p-0 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>

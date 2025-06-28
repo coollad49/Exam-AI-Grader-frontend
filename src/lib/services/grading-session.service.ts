@@ -4,7 +4,7 @@ import type {
   UpdateStudentInput,
   StudentFeedbackInput,
 } from "@/lib/validations/grading-session"
-import { SessionStatus, GradingStatus, LogLevel } from "@prisma/client"
+import {StudentGradingStatus, SessionStatus, LogLevel } from "@prisma/client"
 
 export class GradingSessionService {
   static async createSession(data: CreateGradingSessionInput) {
@@ -47,11 +47,10 @@ export class GradingSessionService {
           user: true,
           students: {
             include: {
-              questionScores: true,
-              feedback: true,
+              gradingSession : true
             },
             orderBy: {
-              name: "asc",
+              studentName: "asc",
             },
           },
           logs: {
@@ -87,7 +86,7 @@ export class GradingSessionService {
         updatedAt: new Date(),
       }
 
-      if (status === SessionStatus.IN_PROGRESS) {
+      if (status === SessionStatus.PROCESSING) {
         updateData.startedAt = new Date()
       } else if (status === SessionStatus.COMPLETED) {
         updateData.completedAt = new Date()
@@ -131,13 +130,13 @@ export class GradingSessionService {
     try {
       const student = await prisma.student.create({
         data: {
-          name: studentData.name,
+          studentName: studentData.studentName,
           studentId: studentData.studentId,
           fileName: studentData.fileName,
           fileSize: studentData.fileSize,
           uploadedAt: studentData.fileName ? new Date() : undefined,
           gradingSessionId: sessionId,
-          status: GradingStatus.PENDING,
+          studentGradingStatus: StudentGradingStatus.PENDING,
         },
       })
 
@@ -145,7 +144,7 @@ export class GradingSessionService {
       await this.addLog(
         sessionId,
         LogLevel.INFO,
-        `Student ${studentData.name} added to session`,
+        `Student ${studentData.studentId} added to session`,
         "student",
         undefined,
         student.id,
@@ -161,9 +160,9 @@ export class GradingSessionService {
   static async updateStudentGrading(
     studentId: string,
     taskId: string,
-    status: GradingStatus,
-    scores?: { questionId: string; score: number; maxScore: number }[],
-    feedback?: StudentFeedbackInput[],
+    status: StudentGradingStatus,
+    // scores?: { questionId: string; score: number; maxScore: number }[],
+    // feedback?: StudentFeedbackInput[],
   ) {
     try {
       const result = await prisma.$transaction(async (tx) => {
@@ -172,58 +171,10 @@ export class GradingSessionService {
           where: { id: studentId },
           data: {
             taskId,
-            status,
-            gradedAt: status === GradingStatus.COMPLETED ? new Date() : undefined,
+            studentGradingStatus: status,
+            gradedAt: status === StudentGradingStatus.COMPLETED ? new Date() : undefined,
           },
         })
-
-        // Add question scores if provided
-        if (scores && scores.length > 0) {
-          await tx.questionScore.deleteMany({
-            where: { studentId },
-          })
-
-          await tx.questionScore.createMany({
-            data: scores.map((score) => ({
-              studentId,
-              questionId: score.questionId,
-              score: score.score,
-              maxScore: score.maxScore,
-            })),
-          })
-
-          // Calculate total score
-          const totalScore = scores.reduce((sum, score) => sum + score.score, 0)
-          const maxScore = scores.reduce((sum, score) => sum + score.maxScore, 0)
-          const percentage = maxScore > 0 ? (totalScore / maxScore) * 100 : 0
-
-          await tx.student.update({
-            where: { id: studentId },
-            data: {
-              totalScore,
-              maxScore,
-              percentage,
-            },
-          })
-        }
-
-        // Add feedback if provided
-        if (feedback && feedback.length > 0) {
-          await tx.studentFeedback.deleteMany({
-            where: { studentId },
-          })
-
-          await tx.studentFeedback.createMany({
-            data: feedback.map((fb) => ({
-              studentId,
-              questionId: fb.questionId,
-              feedback: fb.feedback,
-              type: fb.type,
-              confidence: fb.confidence,
-              keywords: fb.keywords,
-            })),
-          })
-        }
 
         return student
       })
@@ -231,8 +182,8 @@ export class GradingSessionService {
       // Log grading update
       await this.addLog(
         result.gradingSessionId,
-        status === GradingStatus.COMPLETED ? LogLevel.SUCCESS : LogLevel.INFO,
-        `Student ${result.name} grading status: ${status}`,
+        status === StudentGradingStatus.COMPLETED ? LogLevel.SUCCESS : LogLevel.INFO,
+        `Student ${result.studentName} grading status: ${status}`,
         "grading",
         undefined,
         studentId,
@@ -245,45 +196,45 @@ export class GradingSessionService {
     }
   }
 
-  static async calculateSessionStatistics(sessionId: string) {
-    try {
-      const students = await prisma.student.findMany({
-        where: {
-          gradingSessionId: sessionId,
-          status: GradingStatus.COMPLETED,
-          percentage: { not: null },
-        },
-        select: {
-          percentage: true,
-        },
-      })
+  // static async calculateSessionStatistics(sessionId: string) {
+  //   try {
+  //     const students = await prisma.student.findMany({
+  //       where: {
+  //         gradingSessionId: sessionId,
+  //         studentGradingStatus: StudentGradingStatus.COMPLETED,
+  //         percentage: { not: null },
+  //       },
+  //       select: {
+  //         percentage: true,
+  //       },
+  //     })
 
-      if (students.length === 0) {
-        return null
-      }
+  //     if (students.length === 0) {
+  //       return null
+  //     }
 
-      const percentages = students.map((s) => s.percentage!).filter((p) => p !== null)
-      const averageScore = percentages.reduce((sum, p) => sum + p, 0) / percentages.length
-      const highestScore = Math.max(...percentages)
-      const lowestScore = Math.min(...percentages)
-      const passingRate = (percentages.filter((p) => p >= 50).length / percentages.length) * 100
+  //     const percentages = students.map((s) => s.percentage!).filter((p) => p !== null)
+  //     const averageScore = percentages.reduce((sum, p) => sum + p, 0) / percentages.length
+  //     const highestScore = Math.max(...percentages)
+  //     const lowestScore = Math.min(...percentages)
+  //     const passingRate = (percentages.filter((p) => p >= 50).length / percentages.length) * 100
 
-      const updatedSession = await prisma.gradingSession.update({
-        where: { id: sessionId },
-        data: {
-          averageScore,
-          highestScore,
-          lowestScore,
-          passingRate,
-        },
-      })
+  //     const updatedSession = await prisma.gradingSession.update({
+  //       where: { id: sessionId },
+  //       data: {
+  //         averageScore,
+  //         highestScore,
+  //         lowestScore,
+  //         passingRate,
+  //       },
+  //     })
 
-      return updatedSession
-    } catch (error) {
-      console.error("Error calculating session statistics:", error)
-      throw new Error("Failed to calculate session statistics")
-    }
-  }
+  //     return updatedSession
+  //   } catch (error) {
+  //     console.error("Error calculating session statistics:", error)
+  //     throw new Error("Failed to calculate session statistics")
+  //   }
+  // }
 
   static async addLog(
     sessionId: string,
@@ -360,7 +311,7 @@ export class GradingSessionService {
         include: {
           students: {
             select: {
-              status: true,
+              studentGradingStatus: true,
             },
           },
         },
@@ -371,11 +322,11 @@ export class GradingSessionService {
       }
 
       const totalStudents = session.students.length
-      const completedStudents = session.students.filter(s => s.status === GradingStatus.COMPLETED).length
-      const failedStudents = session.students.filter(s => s.status === GradingStatus.FAILED).length
-      const processingStudents = session.students.filter(s => s.status === GradingStatus.PROCESSING).length
+      const completedStudents = session.students.filter(s => s.studentGradingStatus === StudentGradingStatus.COMPLETED).length
+      const failedStudents = session.students.filter(s => s.studentGradingStatus === StudentGradingStatus.FAILED).length
+      const processingStudents = session.students.filter(s => s.studentGradingStatus === StudentGradingStatus.PROCESSING).length
 
-      let newStatus = session.status
+      let newStatus = session.sessionStatus
 
       // Determine new status based on student completion
       if (completedStudents === totalStudents && totalStudents > 0) {
@@ -386,17 +337,17 @@ export class GradingSessionService {
         newStatus = SessionStatus.COMPLETED
       } else if (processingStudents > 0 || completedStudents > 0) {
         // Some students are processing or completed
-        newStatus = SessionStatus.IN_PROGRESS
+        newStatus = SessionStatus.PROCESSING
       }
 
       // Update session status if it changed
-      if (newStatus !== session.status) {
+      if (newStatus !== session.sessionStatus) {
         const updatedSession = await this.updateSessionStatus(sessionId, newStatus)
         
         // Calculate statistics if session is completed
-        if (newStatus === SessionStatus.COMPLETED) {
-          await this.calculateSessionStatistics(sessionId)
-        }
+        // if (newStatus === SessionStatus.COMPLETED) {
+        //   await this.calculateSessionStatistics(sessionId)
+        // }
 
         return updatedSession
       }
@@ -412,13 +363,13 @@ export class GradingSessionService {
     try {
       return await prisma.gradingSession.findMany({
         where: {
-          status: {
-            in: [SessionStatus.PENDING, SessionStatus.IN_PROGRESS],
+          sessionStatus: {
+            in: [SessionStatus.PENDING, SessionStatus.PROCESSING],
           },
         },
         select: {
           id: true,
-          status: true,
+          sessionStatus: true,
           updatedAt: true,
         },
       })

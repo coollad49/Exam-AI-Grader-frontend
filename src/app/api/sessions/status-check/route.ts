@@ -17,9 +17,9 @@ export async function POST(request: NextRequest) {
         const updatedSession = await GradingSessionService.checkAndUpdateSessionStatus(session.id)
         sessionResults.push({
           sessionId: session.id,
-          oldStatus: session.status,
-          newStatus: updatedSession.status,
-          updated: updatedSession.status !== session.status,
+          oldStatus: session.sessionStatus,
+          newStatus: updatedSession.sessionStatus,
+          updated: updatedSession.sessionStatus !== session.sessionStatus,
         })
       } catch (error) {
         console.error(`Error updating session ${session.id}:`, error)
@@ -37,7 +37,6 @@ export async function POST(request: NextRequest) {
         processed: taskResults.processed,
         updated: taskResults.updated,
         errors: taskResults.errors,
-        details: taskResults.results
       },
       sessions: {
         checked: activeSessions.length,

@@ -30,7 +30,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const createdStudents = [];
     
     for (const student of studentData) {
-      const { name, tempId } = student;
+      const { studentName, studentId, tempId } = student;
       
       // Get the file for this student
       const file = formData.get(`file_${tempId}`) as File;
@@ -41,7 +41,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       
       // Create the student record in the database
       const createdStudent = await GradingSessionService.addStudent(id, {
-        name,
+        studentName,
+        studentId,
         fileName: file.name,
         fileSize: file.size,
         tempId, // Pass along the temporary ID for matching

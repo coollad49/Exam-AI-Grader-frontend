@@ -6,172 +6,39 @@ generator client {
 }
 
 datasource db {
+  // Switched to PostgreSQL for better JSON support (JSONB) and
+  // general scalability compared to SQLite for a production system.
+  // If you must use SQLite, the `Json` type will still work,
+  // but JSON querying capabilities will be more limited.
   provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String
-  role      UserRole @default(TEACHER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  gradingSessions GradingSession[]
-  sessionLogs     SessionLog[]
-
-  @@map("users")
-}
-
-model GradingSession {
-  id          String        @id @default(cuid())
-  title       String
-  subject     String
-  examYear    String
-  status      SessionStatus @default(PENDING)
-  numStudents Int
-  
-  // Grading configuration
-  gradingRubric Json
-  
-  // Session statistics
-  averageScore  Float?
-  highestScore  Float?
-  lowestScore   Float?
-  passingRate   Float?
-  
-  // Metadata
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  startedAt DateTime?
-  completedAt DateTime?
-  
-  // Relations
-  userId   String
-  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  students Student[]
-  logs     SessionLog[]
-
-  @@map("grading_sessions")
-}
-
-model Student {
-  id       String @id @default(cuid())
-  name     String
-  studentId String? // Optional external student ID
-  
-  // Exam file information
-  fileName     String?
-  fileSize     Int?
-  uploadedAt   DateTime?
-  
-  // Grading results
-  totalScore   Float?
-  maxScore     Float?
-  percentage   Float?
-  status       GradingStatus @default(PENDING)
-  
-  // AI grading task information
-  taskId       String?
-  
-  // Metadata
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  gradedAt  DateTime?
-  
-  // Relations
-  gradingSessionId String
-  gradingSession   GradingSession @relation(fields: [gradingSessionId], references: [id], onDelete: Cascade)
-  questionScores   QuestionScore[]
-  feedback         StudentFeedback[]
-
-  @@unique([gradingSessionId, name])
-  @@map("students")
-}
-
-model QuestionScore {
-  id         String @id @default(cuid())
-  questionId String // e.g., "q1", "q2a", "q2b"
-  score      Float
-  maxScore   Float
-  
-  // Metadata
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
-  // Relations
-  studentId String
-  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, questionId])
-  @@map("question_scores")
-}
-
-model StudentFeedback {
-  id         String       @id @default(cuid())
-  questionId String       // e.g., "q1", "q2a", "q2b"
-  feedback   String
-  type       FeedbackType @default(GENERAL)
-  
-  // Metadata
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
-  // Relations
-  studentId String
-  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, questionId, type])
-  @@map("student_feedback")
-}
-
-model SessionLog {
-  id        String   @id @default(cuid())
-  level     LogLevel
-  message   String
-  context   String?
-  studentId String?
-  
-  // Additional metadata
-  metadata  Json?
-  
-  // Timestamp
-  createdAt DateTime @default(now())
-  
-  // Relations
-  gradingSessionId String
-  gradingSession   GradingSession @relation(fields: [gradingSessionId], references: [id], onDelete: Cascade)
-  userId           String?
-  user             User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  @@index([gradingSessionId, createdAt])
-  @@index([level])
-  @@map("session_logs")
-}
-
-// Enums
+// Enums (kept and slightly adjusted for clarity/completeness)
 enum UserRole {
   ADMIN
   TEACHER
   EXAMINER
+  // STUDENT // Consider if students will also have user accounts
 }
 
 enum SessionStatus {
   PENDING
-  IN_PROGRESS
+  PROCESSING  // Renamed IN_PROGRESS for clarity, often used for tasks
   COMPLETED
   FAILED
   CANCELLED
 }
 
-enum GradingStatus {
+// Renamed and expanded GradingStatus for student-level grading process
+enum StudentGradingStatus {
   PENDING
-  PROCESSING
-  COMPLETED
-  FAILED
-  REQUIRES_REVIEW
+  PROCESSING        // AI is working on it
+  COMPLETED         // AI has provided results
+  FAILED            // AI grading failed
+  REQUIRES_REVIEW   // AI grading completed but needs human verification
+  APPROVED          // Human review complete and approved
+  REJECTED          // Human review rejected AI results, might need re-grading
 }
 
 enum LogLevel {
@@ -187,4 +54,185 @@ enum FeedbackType {
   STRENGTH
   IMPROVEMENT
   SUGGESTION
+  // Consider if AI-generated feedback needs a specific type, e.g., AI_GENERATED
+}
+
+// ====================================================================
+// Core Models
+// ====================================================================
+
+model User {
+  id              String           @id @default(cuid())
+  email           String           @unique
+  name            String
+  role            UserRole         @default(TEACHER)
+  passwordHash    String?          // Add for authentication
+  lastLogin       DateTime?
+  emailVerifiedAt DateTime?        // For email verification flow
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  gradingSessions GradingSession[]
+  sessionLogs     SessionLog[]
+
+  @@map("users")
+}
+
+model GradingSession {
+  id          String        @id @default(cuid())
+  title       String
+  subject     String
+  examYear    String
+  // `status` renamed to `sessionStatus` for clarity
+  sessionStatus SessionStatus @default(PENDING)
+  // `numStudents` is better derived via count in application layer if exact, or cached.
+  // If `numStudents` is meant to be the *expected* number of students, keep it.
+  numStudents Int?
+
+  // Grading configuration
+  // This JSON field is great for storing the full rubric, e.g., max scores for each question.
+  gradingRubric Json
+
+  // Session statistics (these are often derived/cached, not strictly stored)
+  // You can derive these from student.totalScore in application logic or use database views/materialized views.
+  // averageScore Float?
+  // highestScore Float?
+  // lowestScore  Float?
+  // passingRate  Float? // Requires a 'passingScore' threshold in gradingRubric or elsewhere
+
+  // Metadata
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  // Relations
+  userId   String
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  students Student[]
+  logs     SessionLog[]
+
+  @@map("grading_sessions")
+}
+
+model Student {
+  id               String                 @id @default(cuid())
+  // Renamed 'name' to 'studentName' to avoid potential confusion with Student.name property in GraphQL/REST, etc.
+  studentName      String
+  // Using 'externalStudentId' for clarity, assuming this comes from an external system.
+  studentId String?                @unique // If truly unique across *all* sessions/orgs, use @unique
+                                                   // If unique *per session*, then @@unique([gradingSessionId, externalStudentId])
+                                                   // or just rely on @@unique([gradingSessionId, studentName]) if name is sufficient.
+
+  // Exam file information (consider moving this to a dedicated `StudentExamSubmission` if complex)
+  fileName         String?                // e.g., "student_exam_123.pdf"
+  fileUrl          String?                // URL to the stored file (S3, GCS, etc.)
+  fileMimeType     String?                // e.g., "application/pdf"
+  fileSize         Int?                   // Stored in bytes
+  uploadedAt       DateTime?
+
+  // Overall grading summary (can be derived from rawGradingOutput or updated explicitly)
+  totalScore       Float?                 // Sum of all question scores from rawGradingOutput.result.results
+  maxScorePossible Float?                 // Max possible score for THIS student's submission (from rubric/config)
+  percentage       Float?                 // (totalScore / maxScorePossible) * 100
+  // Renamed 'status' to 'studentGradingStatus' to differentiate from GradingSession.sessionStatus
+  studentGradingStatus StudentGradingStatus @default(PENDING)
+
+  // AI grading task information (from your input JSON's top level)
+  taskId  String?                @unique // ID from the AI service (e.g., Celery task ID)
+  // status of the AI process itself, independent of final student grading outcome
+  aiTaskStatus     String?                // Use string for external status, or map to an enum if known states
+  // Add a field to store the raw output from the AI service. This is key for flexibility.
+  // This will store your entire JSON object: { task_id, status, result: {...} }
+  rawGradingOutput Json?
+
+  // Metadata
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  gradedAt         DateTime?              // Timestamp when AI grading completed and `rawGradingOutput` was set
+
+  // Relations
+  gradingSessionId String
+  gradingSession   GradingSession         @relation(fields: [gradingSessionId], references: [id], onDelete: Cascade)
+  // Replaced QuestionScore and StudentFeedback with the flexible `rawGradingOutput`
+  // as discussed. If you need explicit, separate entities for specific questions/feedback
+  // (e.g., for direct editing by a teacher), you would re-introduce them, but
+  // typically, the JSON field is sufficient for AI-generated output.
+  // If you keep them, ensure they are synchronized with the rawGradingOutput.
+  // QuestionScore[] // Removed for now, covered by `rawGradingOutput`
+  // StudentFeedback[] // Removed for now, covered by `rawGradingOutput`
+
+  // Composite unique constraint: a student name must be unique within a grading session.
+  @@unique([gradingSessionId, studentName])
+  // If externalStudentId is only unique within a session:
+  // @@unique([gradingSessionId, externalStudentId])
+
+  @@map("students")
+}
+
+// Removed QuestionScore and StudentFeedback models
+// as their data is intended to be stored within the `rawGradingOutput` JSON field
+// of the `Student` model for maximum flexibility and to match the AI output structure.
+// If specific parts of the AI output need explicit relational modeling for
+// human interaction, complex queries, or reporting that JSON queries can't handle efficiently,
+// then they could be reintroduced.
+/*
+model QuestionScore {
+  id         String @id @default(cuid())
+  questionId String // e.g., "q1", "q2a", "q2b"
+  score      Float
+  maxScore   Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, questionId])
+  @@map("question_scores")
+}
+
+model StudentFeedback {
+  id         String       @id @default(cuid())
+  questionId String       // e.g., "q1", "q2a", "q2b"
+  feedback   String
+  type       FeedbackType @default(GENERAL)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, questionId, type])
+  @@map("student_feedback")
+}
+*/
+
+model SessionLog {
+  id        String   @id @default(cuid())
+  level     LogLevel
+  message   String
+  context   String? // e.g., "AI Grading Service", "File Upload", "User Action"
+  studentId String?  // Optional: link log entries to a specifi@relation(fields: [studentId], referencc student
+  // If `studentId` is often set, consider a relation `student Student? es: [id])`
+  // This allows direct navigation `log.student` but adds a foreign key constraint.
+
+  // Additional metadata for structured logging
+  metadata  Json? // Could contain more detailed error info, request/response data, etc.
+
+  // Timestamp
+  createdAt DateTime @default(now())
+
+  // Relations
+  gradingSessionId String
+  gradingSession   GradingSession @relation(fields: [gradingSessionId], references: [id], onDelete: Cascade)
+  userId           String?
+  user             User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([gradingSessionId, createdAt]) // Good for time-based queries within a session
+  @@index([level]) // Good for filtering by log severity
+  @@map("session_logs")
 }

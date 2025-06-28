@@ -1,400 +1,280 @@
-import { prisma } from "@/lib/prisma"
-import { GradingStatus, LogLevel } from "@prisma/client"
-import { GradingSessionService } from "./grading-session.service"
+import { prisma } from "@/lib/prisma";
+import { StudentGradingStatus, Prisma, LogLevel, Student } from "@prisma/client";
+import { GradingSessionService } from "./grading-session.service";
 
+// This interface defines the expected structure of the successful response from the grading server.
 interface GradingTaskResult {
-  status: string
-  progress?: {
-    current_step?: string
-    message?: string
-  }
-  result?: {
-    total_score: number
-    max_score: number
-    feedback: Array<{
-      question_id: string
-      score: number
-      max_score: number
-      feedback: string
-      confidence?: number
-      keywords?: string[]
-    }>
-  }
-  error?: string
+  task_id: string;
+  status: string; // e.g., 'SUCCESS', 'FAILURE'
+  result: {
+    status: string; // e.g., 'COMPLETED'
+    results: {
+      // The key is the question number as a string, e.g., "1a", "2", "3b"
+      [key: string]: {
+        score: number;
+        feedback: string;
+        page_source: number;
+      };
+    };
+  };
+  error?: string;
 }
 
+type StudentWithSession = Student & {
+  gradingSession: { id: string; };
+};
+
 export class TaskMonitorService {
-  private static readonly BATCH_SIZE = 10
-  private static readonly MAX_RETRIES = 3
+  private static readonly BATCH_SIZE = 10;
+  private static readonly MAX_RETRIES = 3;
 
   /**
-   * Check and update status for all pending grading tasks
-   * This should be called periodically by a background job
+   * Checks and updates status for a batch of all pending grading tasks.
    */
   static async checkAllPendingTasks(): Promise<{
-    processed: number
-    updated: number
-    errors: number
-    results: Array<{
-      studentId: string
-      taskId: string
-      oldStatus: string
-      newStatus: string
-      updated: boolean
-      error?: string
-    }>
+    processed: number;
+    updated: number;
+    errors: number;
   }> {
-    try {
-      // Get all students with pending/processing tasks
-      const pendingStudents = await prisma.student.findMany({
-        where: {
-          taskId: { not: null },
-          status: {
-            in: [GradingStatus.PENDING, GradingStatus.PROCESSING]
-          }
-        },
-        include: {
-          gradingSession: {
-            select: {
-              id: true,
-              title: true,
-              status: true
-            }
-          }
-        },
-        take: this.BATCH_SIZE
-      })
+    const pendingStudents = await prisma.student.findMany({
+      where: {
+        taskId: { not: null },
+        studentGradingStatus: { in: [StudentGradingStatus.PENDING, StudentGradingStatus.PROCESSING] },
+      },
+      include: {
+        gradingSession: { select: { id: true } },
+      },
+      take: this.BATCH_SIZE,
+    });
 
-      console.log(`Found ${pendingStudents.length} students with pending/processing tasks`)
+    console.log(`[TaskMonitor] Found ${pendingStudents.length} students with pending/processing tasks.`);
 
-      const results = []
-      let updated = 0
-      let errors = 0
+    let updated = 0;
+    let errors = 0;
 
-      for (const student of pendingStudents) {
-        try {
-          const result = await this.checkAndUpdateStudentTask(student)
-          results.push(result)
-          
-          if (result.updated) {
-            updated++
-            
-            // Log the update
-            await GradingSessionService.addLog(
-              student.gradingSessionId,
-              LogLevel.INFO,
-              `Student ${student.name} status updated from ${result.oldStatus} to ${result.newStatus}`,
-              'system'
-            )
-          }
-        } catch (error) {
-          errors++
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-          console.error(`Error checking student ${student.id} task ${student.taskId}:`, error)
-          
-          results.push({
-            studentId: student.id,
-            taskId: student.taskId!,
-            oldStatus: student.status,
-            newStatus: student.status,
-            updated: false,
-            error: errorMessage
-          })
-
-          // Log the error
-          await GradingSessionService.addLog(
-            student.gradingSessionId,
-            LogLevel.ERROR,
-            `Failed to check task status for student ${student.name}: ${errorMessage}`,
-            'system'
-          )
+    for (const student of pendingStudents) {
+      try {
+        const result = await this.checkAndUpdateStudentTask(student as StudentWithSession);
+        if (result.updated) {
+          updated++;
         }
+      } catch (error) {
+        errors++;
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        console.error(`[TaskMonitor] Error processing student ${student.id} (Task ID: ${student.taskId}):`, error);
+        await GradingSessionService.addLog(
+          student.gradingSessionId,
+          LogLevel.ERROR,
+          `Failed to check task status for student ${student.studentName}: ${errorMessage}`,
+          'system'
+        );
       }
-
-      // Check and update session statuses for affected sessions
-      const affectedSessionIds = new Set(
-        pendingStudents.map(s => s.gradingSessionId)
-      )
-
-      for (const sessionId of affectedSessionIds) {
-        try {
-          await GradingSessionService.checkAndUpdateSessionStatus(sessionId)
-        } catch (error) {
-          console.error(`Error updating session ${sessionId} status:`, error)
-        }
-      }
-
-      return {
-        processed: pendingStudents.length,
-        updated,
-        errors,
-        results
-      }
-    } catch (error) {
-      console.error('Error in checkAllPendingTasks:', error)
-      throw error
     }
+    
+    const affectedSessionIds = [...new Set(pendingStudents.map(s => s.gradingSessionId))];
+    for (const sessionId of affectedSessionIds) {
+      await GradingSessionService.checkAndUpdateSessionStatus(sessionId);
+    }
+
+    return { processed: pendingStudents.length, updated, errors };
   }
 
+  
   /**
-   * Check and update a specific student's task status
-   */
-  private static async checkAndUpdateStudentTask(student: any): Promise<{
-    studentId: string
-    taskId: string
-    oldStatus: string
-    newStatus: string
-    updated: boolean
-    error?: string
-  }> {
-    const oldStatus = student.status
-    
-    try {
-      // Fetch task status from grading server
-      const taskResult = await this.fetchTaskStatus(student.taskId!)
-      
-      let newStatus = oldStatus
-      let shouldUpdate = false
-      
-      // Determine new status based on task result
-      if (taskResult.status === 'SUCCESS' || taskResult.status === 'COMPLETED') {
-        newStatus = GradingStatus.COMPLETED
-        shouldUpdate = true
-        
-        // Update student with grading results
-        if (taskResult.result) {
-          await this.updateStudentWithResults(student.id, taskResult.result)
-        }
-      } else if (taskResult.status === 'FAILURE' || taskResult.status === 'ERROR') {
-        newStatus = GradingStatus.FAILED
-        shouldUpdate = true
-      } else if (taskResult.status === 'PROGRESS' || taskResult.status === 'PROCESSING_PDF') {
-        if (oldStatus === GradingStatus.PENDING) {
-          newStatus = GradingStatus.PROCESSING
-          shouldUpdate = true
-        }
-      }
+     * Checks a single student's task status and updates the database.
+     */
+  private static async checkAndUpdateStudentTask(student: StudentWithSession): Promise<{ updated: boolean , status?: StudentGradingStatus, error?: string }> {
+    const oldStatus = student.studentGradingStatus;
+    const taskResult = await this.fetchTaskStatus(student.taskId!);
 
-      // Update status if changed
-      if (shouldUpdate && newStatus !== oldStatus) {
-        await prisma.student.update({
+    let newStatus = oldStatus;
+    
+    if (['SUCCESS', 'COMPLETED'].includes(taskResult.status)) {
+      newStatus = StudentGradingStatus.COMPLETED;
+    } else if (['FAILURE', 'ERROR'].includes(taskResult.status)) {
+      newStatus = StudentGradingStatus.FAILED;
+    } else if (['PROGRESS', 'PROCESSING_PDF'].includes(taskResult.status) && oldStatus === StudentGradingStatus.PENDING) {
+      newStatus = StudentGradingStatus.PROCESSING;
+    }
+
+    if (newStatus !== oldStatus) {
+      await prisma.$transaction(async (tx) => {
+        // 1. Update the student's status and graded timestamp.
+        await tx.student.update({
           where: { id: student.id },
           data: {
-            status: newStatus,
-            gradedAt: newStatus === GradingStatus.COMPLETED ? new Date() : undefined
-          }
-        })
+            studentGradingStatus: newStatus,
+            gradedAt: newStatus === StudentGradingStatus.COMPLETED ? new Date() : undefined,
+          },
+        });
+
+        // 2. If the task completed successfully, save the raw JSON output.
+        if (newStatus === StudentGradingStatus.COMPLETED && taskResult.result) {
+          await this.saveRawGradingOutput(tx, student.id, taskResult.result);
+        }
+      });
+      
+      console.log(`[TaskMonitor] Student ${student.id} status updated from ${oldStatus} to ${newStatus}.`);
+      await GradingSessionService.addLog(
+        student.gradingSessionId,
+        LogLevel.INFO,
+        `Grading for student ${student.studentName} changed from ${oldStatus} to ${newStatus}.`,
+        'system'
+      );
+      return { updated: true };
+    }
+
+    return { updated: false };
+  }
+
+
+  
+
+  /**
+ * Saves the raw, unprocessed JSON results from the grading server
+ * to the student's `rawGradingOutput` field.
+ * @param tx - The Prisma transaction client.
+ * @param studentId - The ID of the student to update.
+ * @param result - The 'result' object from the GradingTaskResult.
+ */
+  private static async saveRawGradingOutput(
+    tx: Prisma.TransactionClient,
+    studentId: string,
+    result: GradingTaskResult['result']
+  ): Promise<void> {
+    if (!result) return;
+
+    await tx.student.update({
+      where: { id: studentId },
+      data: {
+        // Directly store the entire result object into the Json field.
+        // Your application logic can then parse this field as needed.
+        rawGradingOutput: result,
+      },
+    });
+  }
+
+  /**
+   * Checks the status of a single, specific task ID.
+   */
+  static async checkSpecificTask(taskId: string): Promise<{
+    taskId: string;
+    updated: boolean;
+    error?: string;
+  }> {
+    try {
+      const student = await prisma.student.findFirst({
+        where: { taskId },
+        include: {
+          gradingSession: {
+            select: { id: true },
+          },
+        },
+      });
+
+      if (!student) {
+        throw new Error(`No student found with task ID: ${taskId}`);
+      }
+
+      const result = await this.checkAndUpdateStudentTask(student as Student & { gradingSession: { id: string } });
+
+      // If the student's status was updated, refresh the overall session status.
+      if (result.updated) {
+        await GradingSessionService.checkAndUpdateSessionStatus(student.gradingSessionId);
       }
 
       return {
-        studentId: student.id,
-        taskId: student.taskId!,
-        oldStatus,
-        newStatus,
-        updated: shouldUpdate && newStatus !== oldStatus
+        taskId,
+        updated: result.updated,
       }
     } catch (error) {
-      console.error(`Error checking task ${student.taskId} for student ${student.id}:`, error)
-      throw error
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`Error checking specific task ${taskId}:`, error);
+      return {
+        taskId,
+        updated: false,
+        error: errorMessage,
+      };
     }
   }
 
   /**
-   * Fetch task status from grading server
+   * Fetches the grading task status from the external grading server.
    */
   private static async fetchTaskStatus(taskId: string): Promise<GradingTaskResult> {
-    const gradingServerUrl = process.env.GRADING_SERVER_URL
+    const gradingServerUrl = process.env.GRADING_SERVER_URL;
     if (!gradingServerUrl) {
-      throw new Error('GRADING_SERVER_URL is not configured')
+      throw new Error("GRADING_SERVER_URL is not configured");
     }
 
     try {
       const response = await fetch(`${gradingServerUrl}/api/grade/status/${taskId}/`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        // Add timeout to prevent hanging
-        signal: AbortSignal.timeout(30000) // 30 seconds
-      })
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(90000), // 90-second timeout
+      });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-
-      const data = await response.json()
-      return data
+      return response.json();
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error('Request timeout while checking task status')
+        throw new Error('Request timeout while checking task status');
       }
-      throw error
+      throw error;
     }
   }
 
   /**
-   * Update student record with grading results
-   */
-  private static async updateStudentWithResults(
-    studentId: string, 
-    results: GradingTaskResult['result']
-  ): Promise<void> {
-    if (!results) return
-
-    try {
-      await prisma.$transaction(async (tx) => {
-        // Update student scores
-        await tx.student.update({
-          where: { id: studentId },
-          data: {
-            totalScore: results.total_score,
-            maxScore: results.max_score,
-            percentage: results.max_score > 0 ? (results.total_score / results.max_score) * 100 : 0
-          }
-        })
-
-        // Delete existing scores and feedback
-        await tx.questionScore.deleteMany({
-          where: { studentId }
-        })
-        
-        await tx.studentFeedback.deleteMany({
-          where: { studentId }
-        })
-
-        // Add new question scores and feedback
-        if (results.feedback && results.feedback.length > 0) {
-          await tx.questionScore.createMany({
-            data: results.feedback.map(item => ({
-              studentId,
-              questionId: item.question_id,
-              score: item.score,
-              maxScore: item.max_score
-            }))
-          })
-
-          await tx.studentFeedback.createMany({
-            data: results.feedback.map(item => ({
-              studentId,
-              questionId: item.question_id,
-              feedback: item.feedback,
-              type: 'GENERAL',
-              confidence: item.confidence || null,
-              keywords: item.keywords || null
-            }))
-          })
-        }
-      })
-    } catch (error) {
-      console.error(`Error updating student ${studentId} with results:`, error)
-      throw error
-    }
-  }
-
-  /**
-   * Check status for a specific task ID
-   */
-  static async checkSpecificTask(taskId: string): Promise<{
-    taskId: string
-    status: string
-    updated: boolean
-    error?: string
-  }> {
-    try {
-      // Find student with this task ID
-      const student = await prisma.student.findFirst({
-        where: { taskId },
-        include: {
-          gradingSession: {
-            select: { id: true }
-          }
-        }
-      })
-
-      if (!student) {
-        throw new Error(`No student found with task ID: ${taskId}`)
-      }
-
-      const result = await this.checkAndUpdateStudentTask(student)
-      
-      // Update session status if student was updated
-      if (result.updated) {
-        await GradingSessionService.checkAndUpdateSessionStatus(student.gradingSessionId)
-      }
-
-      return {
-        taskId,
-        status: result.newStatus,
-        updated: result.updated,
-        error: result.error
-      }
-    } catch (error) {
-      console.error(`Error checking specific task ${taskId}:`, error)
-      return {
-        taskId,
-        status: 'ERROR',
-        updated: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }
-    }
-  }
-
-  /**
-   * Get monitoring statistics
+   * Retrieves monitoring statistics for ongoing grading tasks and sessions.
    */
   static async getMonitoringStats(): Promise<{
-    totalPendingTasks: number
-    totalProcessingTasks: number
-    totalActiveSessions: number
+    totalPendingTasks: number;
+    totalProcessingTasks: number;
+    totalActiveSessions: number;
     oldestPendingTask?: {
-      taskId: string
-      studentName: string
-      createdAt: Date
-    }
+      taskId: string;
+      studentName: string;
+      createdAt: Date;
+    };
   }> {
     try {
-      const [pendingCount, processingCount, activeSessionsCount, oldestTask] = await Promise.all([
-        // Count pending tasks
+      const [pendingCount, processingCount, activeSessionsCount, oldestTask] = await prisma.$transaction([
         prisma.student.count({
           where: {
             taskId: { not: null },
-            status: GradingStatus.PENDING
-          }
+            studentGradingStatus: StudentGradingStatus.PENDING,
+          },
         }),
-        
-        // Count processing tasks
         prisma.student.count({
           where: {
             taskId: { not: null },
-            status: GradingStatus.PROCESSING
-          }
+            studentGradingStatus: StudentGradingStatus.PROCESSING,
+          },
         }),
-        
-        // Count active sessions
         prisma.gradingSession.count({
           where: {
-            status: {
-              in: ['PENDING', 'IN_PROGRESS']
-            }
-          }
+            sessionStatus: {
+              in: [StudentGradingStatus.PENDING, StudentGradingStatus.PROCESSING],
+            },
+          },
         }),
-        
-        // Find oldest pending task
         prisma.student.findFirst({
           where: {
             taskId: { not: null },
-            status: GradingStatus.PENDING
+            studentGradingStatus: StudentGradingStatus.PENDING,
           },
           orderBy: {
-            createdAt: 'asc'
+            createdAt: 'asc',
           },
           select: {
             taskId: true,
-            name: true,
-            createdAt: true
-          }
-        })
-      ])
+            studentName: true,
+            createdAt: true,
+          },
+        }),
+      ]);
 
       return {
         totalPendingTasks: pendingCount,
@@ -402,13 +282,13 @@ export class TaskMonitorService {
         totalActiveSessions: activeSessionsCount,
         oldestPendingTask: oldestTask ? {
           taskId: oldestTask.taskId!,
-          studentName: oldestTask.name,
-          createdAt: oldestTask.createdAt
-        } : undefined
-      }
+          studentName: oldestTask.studentName,
+          createdAt: oldestTask.createdAt,
+        } : undefined,
+      };
     } catch (error) {
-      console.error('Error getting monitoring stats:', error)
-      throw error
+      console.error('Error getting monitoring stats:', error);
+      throw error;
     }
   }
 }

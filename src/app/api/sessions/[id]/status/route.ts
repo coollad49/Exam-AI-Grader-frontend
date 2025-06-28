@@ -14,12 +14,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     return NextResponse.json({
       id: session.id,
-      status: session.status,
-      completedStudents: session.students.filter(s => s.status === 'COMPLETED').length,
+      status: session.sessionStatus,
+      completedStudents: session.students.filter(s => s.studentGradingStatus === 'COMPLETED').length,
       totalStudents: session.students.length,
-      failedStudents: session.students.filter(s => s.status === 'FAILED').length,
-      processingStudents: session.students.filter(s => s.status === 'PROCESSING').length,
-      pendingStudents: session.students.filter(s => s.status === 'PENDING').length,
+      failedStudents: session.students.filter(s => s.studentGradingStatus === 'FAILED').length,
+      processingStudents: session.students.filter(s => s.studentGradingStatus === 'PROCESSING').length,
+      pendingStudents: session.students.filter(s => s.studentGradingStatus === 'PENDING').length,
     })
   } catch (error) {
     console.error("Error fetching session status:", error)
@@ -41,7 +41,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     
     return NextResponse.json({
       id: updatedSession.id,
-      status: updatedSession.status,
+      status: updatedSession.sessionStatus,
       updatedAt: updatedSession.updatedAt,
     })
   } catch (error) {

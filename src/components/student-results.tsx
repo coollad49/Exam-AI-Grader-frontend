@@ -28,7 +28,7 @@ export function StudentResults({ students, onViewDetails }: StudentResultsProps)
           <tr className="border-b text-left text-sm font-medium text-muted-foreground">
             <th className="pb-3 pl-4">Student Name</th>
             <th className="pb-3">Score</th>
-            <th className="pb-3">Performance</th>
+            {/* <th className="pb-3">Performance</th> */}
             <th className="pb-3 pr-4 text-right">Actions</th>
           </tr>
         </thead>
@@ -46,7 +46,7 @@ export function StudentResults({ students, onViewDetails }: StudentResultsProps)
                 <td className="py-3">
                   <span className={getScoreColor(student.score)}>{student.score}%</span>
                 </td>
-                <td className="py-3">
+                {/* <td className="py-3">
                   <Badge
                     variant="outline"
                     className={
@@ -59,7 +59,7 @@ export function StudentResults({ students, onViewDetails }: StudentResultsProps)
                   >
                     {student.score >= 80 ? "Excellent" : student.score >= 60 ? "Good" : "Needs Improvement"}
                   </Badge>
-                </td>
+                </td> */}
                 <td className="py-3 pr-4 text-right">
                   <div className="flex justify-end gap-2">
                     <Button variant="ghost" size="icon" onClick={() => onViewDetails(student.id)}>

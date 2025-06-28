@@ -32,7 +32,7 @@ export function AppSidebar() {
       <SidebarHeader className="flex items-center px-4 py-2">
         <Link href="/" className="flex items-center gap-2">
           <BookOpen className="h-6 w-6 text-primary" />
-          <span className="text-xl font-bold">GradeWise</span>
+          <span className="text-xl font-bold">WAEC AI Grader</span>
         </Link>
       </SidebarHeader>
       <SidebarSeparator />

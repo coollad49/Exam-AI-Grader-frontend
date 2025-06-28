@@ -10,7 +10,8 @@ import { FileUp, Check, AlertCircle, X } from "lucide-react"
 import { toast } from "sonner"
 interface Student {
   id: string
-  name: string
+  studentId: string
+  studentName: string
   file: File | null
 }
 
@@ -23,8 +24,11 @@ export function StudentUploadStep({ students, setStudents }: StudentUploadStepPr
   const [activeStudent, setActiveStudent] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleNameChange = (id: string, name: string) => {
-    setStudents(students.map((student) => (student.id === id ? { ...student, name } : student)))
+  const handleIdChange = (id: string, studentId: string) => {
+    setStudents(students.map((student) => (student.id === id ? { ...student, studentId } : student)))
+  }
+  const handleNameChange = (id: string, studentName: string) => {
+    setStudents(students.map((student) => (student.id === id ? { ...student, studentName } : student)))
   }
 
   const handleFileUpload = (id: string, file: File | null) => {
@@ -39,7 +43,7 @@ export function StudentUploadStep({ students, setStudents }: StudentUploadStepPr
 
     if (file) {
       toast.info("File uploaded", {
-        description: `PDF uploaded for ${students.find((s) => s.id === id)?.name || "student"}`,
+        description: `PDF uploaded for ${students.find((s) => s.id === id)?.studentId || "student"}`,
       })
     }
   }
@@ -84,9 +88,10 @@ export function StudentUploadStep({ students, setStudents }: StudentUploadStepPr
                 >
                   <div className="flex w-full items-center">
                     <span className="mr-2">{index + 1}.</span>
-                    <span className="truncate">{student.name || `Student ${index + 1}`}</span>
+                    <span className="truncate">{student.studentId || `Student ${index + 1}`}</span>
                     <div className="ml-auto flex items-center gap-1">
-                      {student.name && <Check className="h-3 w-3 text-green-500" />}
+                      {student.studentId && <Check className="h-3 w-3 text-green-500" />}
+                      {student.studentName && <Check className="h-3 w-3 text-green-500" />}
                       {student.file && <Check className="h-3 w-3 text-blue-500" />}
                     </div>
                   </div>
@@ -106,11 +111,20 @@ export function StudentUploadStep({ students, setStudents }: StudentUploadStepPr
 
           <div className="space-y-4">
             <div className="grid gap-3">
+              <Label htmlFor={`student-id-${activeStudent}`}>Student ID *</Label>
+              <Input
+                id={`student-id-${activeStudent}`}
+                placeholder="Enter student ID"
+                value={students[activeStudent]?.studentId || ""}
+                onChange={(e) => handleIdChange(students[activeStudent].id, e.target.value)}
+              />
+            </div>
+            <div className="grid gap-3">
               <Label htmlFor={`student-name-${activeStudent}`}>Student Name *</Label>
               <Input
                 id={`student-name-${activeStudent}`}
                 placeholder="Enter student name"
-                value={students[activeStudent]?.name || ""}
+                value={students[activeStudent]?.studentName || ""}
                 onChange={(e) => handleNameChange(students[activeStudent].id, e.target.value)}
               />
             </div>
@@ -160,7 +174,7 @@ export function StudentUploadStep({ students, setStudents }: StudentUploadStepPr
             <Button
               onClick={handleNextStudent}
               disabled={
-                activeStudent >= students.length - 1 || !students[activeStudent]?.name || !students[activeStudent]?.file
+                activeStudent >= students.length - 1 || !students[activeStudent]?.studentId || !students[activeStudent]?.studentName || !students[activeStudent]?.file
               }
             >
               Next Student

@@ -29,7 +29,6 @@ export async function GET(request: NextRequest) {
         errors: taskResults.errors,
         currentStats: stats
       },
-      details: taskResults.results,
     })
   } catch (error) {
     console.error("Background task status check error:", error)

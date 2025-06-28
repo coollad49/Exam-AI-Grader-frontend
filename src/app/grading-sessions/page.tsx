@@ -25,7 +25,7 @@ interface GradingSession {
   title: string
   subject: string
   examYear: string
-  status: string
+  sessionStatus: string
   numStudents: number
   averageScore?: number
   highestScore?: number
@@ -154,8 +154,8 @@ export default function GradingSessions() {
                          session.subject.toLowerCase().includes(searchQuery.toLowerCase())
     
     const matchesStatus = statusFilter === "all" || 
-                         session.status.toLowerCase() === statusFilter.toLowerCase() ||
-                         (statusFilter === "in-progress" && session.status.toLowerCase() === "in_progress")
+                         session.sessionStatus.toLowerCase() === statusFilter.toLowerCase() ||
+                         (statusFilter === "in-progress" && session.sessionStatus.toLowerCase() === "in_progress")
     
     const matchesSubject = subjectFilter === "all" || 
                           session.subject.toLowerCase() === subjectFilter.toLowerCase()
@@ -333,8 +333,8 @@ export default function GradingSessions() {
                         <td className="py-3">{formatDate(session.createdAt)}</td>
                         <td className="py-3">{session._count.students}</td>
                         <td className="py-3">
-                          <Badge variant={getStatusBadgeVariant(session.status)}>
-                            {formatStatus(session.status)}
+                          <Badge variant={getStatusBadgeVariant(session.sessionStatus)}>
+                            {formatStatus(session.sessionStatus)}
                           </Badge>
                         </td>
                         <td className="py-3 pr-4 text-right" onClick={(e) => e.stopPropagation()}>
@@ -348,7 +348,7 @@ export default function GradingSessions() {
                             <Button 
                               variant="ghost" 
                               size="icon" 
-                              disabled={session.status.toLowerCase() !== "completed"}
+                              disabled={session.sessionStatus.toLowerCase() !== "completed"}
                             >
                               <Download className="h-4 w-4" />
                               <span className="sr-only">Download</span>
@@ -369,7 +369,7 @@ export default function GradingSessions() {
                                   View Details
                                 </DropdownMenuItem>
                                 <DropdownMenuItem 
-                                  disabled={session.status.toLowerCase() !== "completed"}
+                                  disabled={session.sessionStatus.toLowerCase() !== "completed"}
                                 >
                                   Download Reports
                                 </DropdownMenuItem>

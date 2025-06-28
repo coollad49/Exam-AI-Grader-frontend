@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { GradingSessionService } from "@/lib/services/grading-session.service"
 import { studentFeedbackSchema } from "@/lib/validations/grading-session"
-import { GradingStatus } from "@prisma/client"
+import { StudentGradingStatus } from "@prisma/client"
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -19,9 +19,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const student = await GradingSessionService.updateStudentGrading(
       id,
       taskId,
-      status as GradingStatus,
-      scores,
-      validatedFeedback,
+      status as StudentGradingStatus,
     )
 
     // Check and update session status after student completion

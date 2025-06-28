@@ -16,11 +16,11 @@ export const createGradingSessionSchema = z.object({
 })
 
 export const updateStudentSchema = z.object({
-  name: z.string().min(1, "Name is required").max(255, "Name too long"),
-  studentId: z.string().optional(),
+  studentName: z.string().min(1, "Name is required").max(255, "Name too long"),
+  studentId: z.string(),
   fileName: z.string().optional(),
   fileSize: z.number().optional(),
-  tempId: z.string().optional(), // For tracking client-side IDs
+  tempId: z.string(), // For tracking client-side IDs
 })
 
 export const studentFeedbackSchema = z.object({
