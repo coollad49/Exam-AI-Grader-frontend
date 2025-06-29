@@ -122,7 +122,7 @@ export default function GradingSessions() {
     switch (status.toLowerCase()) {
       case "completed":
         return "default"
-      case "in_progress":
+      case "processing":
         return "secondary"
       case "pending":
         return "outline"
@@ -133,7 +133,7 @@ export default function GradingSessions() {
 
   const formatStatus = (status: string) => {
     switch (status.toLowerCase()) {
-      case "in_progress":
+      case "processing":
         return "In Progress"
       case "completed":
         return "Completed"
@@ -155,7 +155,7 @@ export default function GradingSessions() {
     
     const matchesStatus = statusFilter === "all" || 
                          session.sessionStatus.toLowerCase() === statusFilter.toLowerCase() ||
-                         (statusFilter === "in-progress" && session.sessionStatus.toLowerCase() === "in_progress")
+                         (statusFilter === "in-progress" && session.sessionStatus.toLowerCase() === "processing")
     
     const matchesSubject = subjectFilter === "all" || 
                           session.subject.toLowerCase() === subjectFilter.toLowerCase()

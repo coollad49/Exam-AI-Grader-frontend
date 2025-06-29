@@ -184,7 +184,7 @@ export function GradingProgressStep({
     }
   }
 
-  const handleWebSocketMessage = (taskId: string, data: any) => {
+  const handleWebSocketMessage = async (taskId: string, data: any) => {
     const { status, details } = data
 
     setTaskProgress((prev) => ({
@@ -213,47 +213,62 @@ export function GradingProgressStep({
         },
       }))
 
-      // Find the studentId for this taskId
-      const student = students.find((s) => s.taskId === taskId)
-      if (student) {
-        // Parse results into scores and feedback arrays
-        const scores = []
-        const feedback = []
-        for (const [questionId, resRaw] of Object.entries(details.results)) {
-          const res = resRaw as {
-            score: number
-            feedback: string
-            max_score?: number
-            page_source?: number
-            confidence?: number
-            keywords?: string[]
-          }
-          scores.push({
-            questionId,
-            score: res.score,
-            maxScore: res.max_score || 0,
-          })
-          feedback.push({
-            questionId,
-            feedback: res.feedback,
-            score: res.score,
-            maxScore: res.max_score || 0,
-            type: "GENERAL",
-            confidence: res.confidence || null,
-            keywords: res.keywords || [],
-          })
-        }
-        // Send to backend for storage
-        fetch(`/api/students/${student.id}/grading`, {
-          method: "PATCH",
+      // Immediately update database via new endpoint
+      try {
+        await fetch(`/api/tasks/${taskId}/update-status`, {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            taskId,
             status: "COMPLETED",
-            scores,
-            feedback,
+            result: details.results,
           }),
         })
+        console.log(`[GradingProgress] Immediately updated task ${taskId} to COMPLETED`)
+      } catch (updateError) {
+        console.error('Failed to immediately update task status:', updateError)
+        
+        // Fallback to old method if new endpoint fails
+        const student = students.find((s) => s.taskId === taskId)
+        if (student) {
+          // Parse results into scores and feedback arrays
+          const scores = []
+          const feedback = []
+          for (const [questionId, resRaw] of Object.entries(details.results)) {
+            const res = resRaw as {
+              score: number
+              feedback: string
+              max_score?: number
+              page_source?: number
+              confidence?: number
+              keywords?: string[]
+            }
+            scores.push({
+              questionId,
+              score: res.score,
+              maxScore: res.max_score || 0,
+            })
+            feedback.push({
+              questionId,
+              feedback: res.feedback,
+              score: res.score,
+              maxScore: res.max_score || 0,
+              type: "GENERAL",
+              confidence: res.confidence || null,
+              keywords: res.keywords || [],
+            })
+          }
+          // Send to backend for storage
+          fetch(`/api/students/${student.id}/grading`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              taskId,
+              status: "COMPLETED",
+              scores,
+              feedback,
+            }),
+          })
+        }
       }
 
       toast.success("Grading completed", {
@@ -271,6 +286,21 @@ export function GradingProgressStep({
           error: errorMessage,
         },
       }))
+
+      // Immediately update database for error status
+      try {
+        await fetch(`/api/tasks/${taskId}/update-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "FAILED",
+            error: errorMessage,
+          }),
+        })
+        console.log(`[GradingProgress] Immediately updated task ${taskId} to FAILED`)
+      } catch (updateError) {
+        console.error('Failed to immediately update task status:', updateError)
+      }
 
       toast.error("Grading failed", {
         description: `Task ${taskId}: ${errorMessage}`,

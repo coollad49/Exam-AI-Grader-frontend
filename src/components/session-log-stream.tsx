@@ -22,14 +22,16 @@ interface LogEntry {
 interface TaskLog {
   taskId: string
   studentName?: string
+  studentId?: string
 }
 
 interface SessionLogStreamProps {
+  sessionId: string
   tasks: TaskLog[]
   sessionStatus: "completed" | "in-progress" | "pending" | "failed"
 }
 
-export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps) {
+export function SessionLogStream({ sessionId, tasks, sessionStatus }: SessionLogStreamProps) {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [isConnected, setIsConnected] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
@@ -40,21 +42,25 @@ export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps
   const pausedLogsRef = useRef<LogEntry[]>([])
   const shouldConnectToWebSocket = sessionStatus === "in-progress" || sessionStatus === "pending"
 
-
-  // Helper to fetch logs for a single task
-  const fetchTaskLogs = async (taskId: string) => {
+  // Helper to fetch session logs
+  const fetchSessionLogs = async () => {
     try {
-      const response = await fetch(`/api/grade/status/${taskId}/logs`)
+      const response = await fetch(`/api/sessions/${sessionId}/logs`)
       if (response.ok) {
-        const taskLogs = await response.json()
-        return taskLogs.map((log: any) => ({
-          ...log,
-          timestamp: new Date(log.timestamp).toLocaleTimeString(),
-          taskId,
+        const sessionLogs = await response.json()
+        return sessionLogs.map((log: any) => ({
+          timestamp: new Date(log.createdAt).toLocaleTimeString(),
+          message: log.message,
+          level: log.level.toLowerCase() as LogEntry["level"],
+          context: log.context,
+          details: log.metadata,
+          studentId: log.studentId,
+          // Map studentId to studentName if available
+          studentName: tasks.find(t => t.studentId === log.studentId)?.studentName,
         }))
       }
     } catch (e) {
-      console.error("Failed to fetch task logs:", e)
+      console.error("Failed to fetch session logs:", e)
     }
     return []
   }
@@ -63,31 +69,74 @@ export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps
   useEffect(() => {
     if (sessionStatus === "completed") {
       (async () => {
-        let allLogs: LogEntry[] = []
-        for (const task of tasks) {
-          const taskLogs = await fetchTaskLogs(task.taskId)
-          // Attach studentName to each log
-          allLogs = allLogs.concat(taskLogs.map((log: LogEntry) => ({ ...log, studentName: task.studentName })))
-        }
-        setLogs(allLogs)
+        const sessionLogs = await fetchSessionLogs()
+        setLogs(sessionLogs)
       })()
       return
     }
-  }, [tasks, sessionStatus])
+    
+    // For active sessions, also load recent historical logs as a starting point
+    if (sessionStatus === "in-progress" || sessionStatus === "pending") {
+      (async () => {
+        console.log(`[SessionLogStream] Loading initial historical logs for active session`)
+        const sessionLogs = await fetchSessionLogs()
+        setLogs(sessionLogs)
+        console.log(`[SessionLogStream] Loaded ${sessionLogs.length} initial logs`)
+      })()
+    }
+  }, [sessionId, sessionStatus])
 
   // Connect to WebSocket for real-time logs (only for active sessions)
   useEffect(() => {
-    if (!(sessionStatus === "in-progress" || sessionStatus === "pending")) return
+    console.log(`[SessionLogStream] WebSocket effect triggered:`, {
+      sessionStatus,
+      tasksCount: tasks.length,
+      tasks: tasks.map(t => ({ taskId: t.taskId, studentName: t.studentName }))
+    })
+    
+    if (!(sessionStatus === "in-progress" || sessionStatus === "pending")) {
+      console.log(`[SessionLogStream] Skipping WebSocket connection - session status: ${sessionStatus}`)
+      return
+    }
+    
     // Open a WebSocket for each task
     tasks.forEach((task) => {
-      if (wsRefs.current[task.taskId]) return // already connected
+      if (wsRefs.current[task.taskId]) {
+        console.log(`[SessionLogStream] WebSocket already exists for task ${task.taskId}`)
+        return // already connected
+      }
+      
+      console.log(`[SessionLogStream] Connecting WebSocket for task ${task.taskId} (${task.studentName})`)
+      
       try {
-        const ws = new WebSocket(`ws://localhost:8000/ws/grading-status/${task.taskId}/`)
+        const wsUrl = `ws://localhost:8000/ws/grading-status/${task.taskId}/`
+        console.log(`[SessionLogStream] Attempting to connect to: ${wsUrl}`)
+        
+        const ws = new WebSocket(wsUrl)
         wsRefs.current[task.taskId] = ws
-        ws.onopen = () => setIsConnected(true)
-        ws.onmessage = (event) => {
+        
+        ws.onopen = () => {
+          console.log(`[SessionLogStream] WebSocket connected for task ${task.taskId}`)
+          setIsConnected(true)
+          
+          // Add connection log to UI
+          setLogs((prev) => [...prev, {
+            timestamp: new Date().toLocaleTimeString(),
+            message: `Connected to real-time log stream for ${task.studentName}`,
+            level: "success" as const,
+            context: "system",
+            taskId: task.taskId,
+            studentName: task.studentName,
+          }])
+        }
+        
+        ws.onmessage = async (event) => {
+          console.log(`[SessionLogStream] Received WebSocket message for task ${task.taskId}:`, event.data)
+          
           try {
             const data = JSON.parse(event.data)
+            console.log(`[SessionLogStream] Parsed data:`, data)
+            
             let logEntry: LogEntry
             if (data.status && data.timestamp && data.message) {
               // New backend format
@@ -109,23 +158,116 @@ export function SessionLogStream({ tasks, sessionStatus }: SessionLogStreamProps
                 studentName: task.studentName,
               }
             }
+            
+            console.log(`[SessionLogStream] Created log entry:`, logEntry)
+            
+            // Save to database for persistence
+            try {
+              await fetch(`/api/sessions/${sessionId}/logs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  level: logEntry.level,
+                  message: logEntry.message,
+                  context: logEntry.context || 'grading',
+                  studentId: task.studentId,
+                  metadata: logEntry.details,
+                }),
+              })
+              console.log(`[SessionLogStream] Saved log to database for task ${task.taskId}`)
+            } catch (dbError) {
+              console.error('Failed to save log to database:', dbError)
+              // Continue showing in UI even if DB save fails
+            }
+            
+            // Immediately update database when task completes
+            if (data.status === 'COMPLETED' || data.status === 'SUCCESS') {
+              try {
+                console.log(`[SessionLogStream] Task ${task.taskId} completed, updating database with result:`, data.result || data.results)
+                await fetch(`/api/tasks/${task.taskId}/update-status`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    status: 'COMPLETED',
+                    result: data.result || data.results || data,
+                    error: data.error,
+                  }),
+                })
+                console.log(`[SessionLogStream] Immediately updated task ${task.taskId} to COMPLETED`)
+              } catch (updateError) {
+                console.error('Failed to immediately update task status:', updateError)
+              }
+            } else if (data.status === 'FAILED' || data.status === 'ERROR') {
+              try {
+                await fetch(`/api/tasks/${task.taskId}/update-status`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    status: 'FAILED',
+                    error: data.error || data.message,
+                  }),
+                })
+                console.log(`[SessionLogStream] Immediately updated task ${task.taskId} to FAILED`)
+              } catch (updateError) {
+                console.error('Failed to immediately update task status:', updateError)
+              }
+            } else if (data.status === 'PROCESSING' || data.status === 'PROCESSING_PDF') {
+              try {
+                await fetch(`/api/tasks/${task.taskId}/update-status`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    status: 'PROCESSING',
+                  }),
+                })
+                console.log(`[SessionLogStream] Immediately updated task ${task.taskId} to PROCESSING`)
+              } catch (updateError) {
+                console.error('Failed to immediately update task status:', updateError)
+              }
+            }
+            
             if (isPaused) {
               pausedLogsRef.current.push(logEntry)
+              console.log(`[SessionLogStream] Log paused for task ${task.taskId}`)
             } else {
-              setLogs((prev) => [...prev, logEntry])
+              setLogs((prev) => {
+                const newLogs = [...prev, logEntry]
+                console.log(`[SessionLogStream] Added log to UI for task ${task.taskId}, total logs: ${newLogs.length}`)
+                return newLogs
+              })
             }
           } catch (error) {
             console.error("Error parsing log message:", error)
           }
         }
-        ws.onclose = () => setIsConnected(false)
-        ws.onerror = () => setIsConnected(false)
+        
+        ws.onclose = (event) => {
+          console.log(`[SessionLogStream] WebSocket closed for task ${task.taskId}:`, event.code, event.reason)
+          setIsConnected(false)
+          
+          // Add disconnection log to UI
+          setLogs((prev) => [...prev, {
+            timestamp: new Date().toLocaleTimeString(),
+            message: `Disconnected from log stream for ${task.studentName}`,
+            level: "warning" as const,
+            context: "system",
+            taskId: task.taskId,
+            studentName: task.studentName,
+          }])
+        }
+        
+        ws.onerror = (error) => {
+          console.error(`[SessionLogStream] WebSocket error for task ${task.taskId}:`, error)
+          setIsConnected(false)
+        }
       } catch (error) {
         console.error("Failed to establish WebSocket connection:", error)
       }
     })
+    
     // Cleanup
     return () => {
+      console.log(`[SessionLogStream] Cleaning up WebSocket connections`)
       Object.values(wsRefs.current).forEach((ws) => {
         if (ws && ws.readyState === WebSocket.OPEN) ws.close()
       })

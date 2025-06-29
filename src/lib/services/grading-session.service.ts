@@ -46,8 +46,18 @@ export class GradingSessionService {
         include: {
           user: true,
           students: {
-            include: {
-              gradingSession : true
+            select: {
+              id: true,
+              studentName: true,
+              taskId: true,
+              studentId: true,
+              fileName: true,
+              totalScore: true,
+              percentage: true,
+              studentGradingStatus: true,
+              gradedAt: true,
+              rawGradingOutput: true,
+              gradingSession: true,
             },
             orderBy: {
               studentName: "asc",
@@ -82,7 +92,7 @@ export class GradingSessionService {
   static async updateSessionStatus(sessionId: string, status: SessionStatus, userId?: string) {
     try {
       const updateData: any = {
-        status,
+        sessionStatus: status,
         updatedAt: new Date(),
       }
 
@@ -376,6 +386,38 @@ export class GradingSessionService {
     } catch (error) {
       console.error("Error fetching active sessions:", error)
       throw new Error("Failed to fetch active sessions")
+    }
+  }
+
+  static async retryFailedStudents(sessionId: string, userId?: string) {
+    try {
+      // Set all FAILED students to PENDING
+      await prisma.student.updateMany({
+        where: {
+          gradingSessionId: sessionId,
+          studentGradingStatus: StudentGradingStatus.FAILED,
+        },
+        data: {
+          studentGradingStatus: StudentGradingStatus.PENDING,
+        },
+      })
+
+      // Set session status to PROCESSING
+      const session = await this.updateSessionStatus(sessionId, SessionStatus.PROCESSING, userId)
+
+      // Log the retry action
+      await this.addLog(
+        sessionId,
+        LogLevel.INFO,
+        `Retry triggered: All FAILED students set to PENDING and session set to PROCESSING`,
+        "system",
+        userId
+      )
+
+      return session
+    } catch (error) {
+      console.error("Error retrying failed students:", error)
+      throw new Error("Failed to retry failed students")
     }
   }
 }

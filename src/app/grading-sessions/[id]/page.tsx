@@ -16,7 +16,7 @@ import { StudentDetailModal } from "@/components/student-detail-modal"
 import { SessionLogStream } from "@/components/session-log-stream"
 import { TaskLogStream } from "@/components/task-log-stream"
 import { useSessionStatusPolling } from "@/hooks/use-session-status-polling"
-import { Dialog, DialogHeader, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogHeader, DialogContent, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "@/components/ui/dialog"
 
 import { toast } from "sonner"
 import { StudentGradingStatus } from "@prisma/client"
@@ -26,6 +26,7 @@ interface GradingSessionDetail {
   subject: string
   examYear: string
   sessionStatus: string
+  gradingRubric: string
   numStudents: number
   averageScore?: number
   highestScore?: number
@@ -61,6 +62,7 @@ interface GradingSessionDetail {
       feedback: string
       type: string
     }>
+    rawGradingOutput?: any
   }>
   _count: {
     students: number
@@ -77,7 +79,7 @@ interface Student {
   taskId?: string
   status?: string
   gradedAt?: string
-
+  rawGradingOutput?: any
 }
 
 
@@ -96,7 +98,7 @@ export default function GradingSessionDetail() {
   // Poll session status to keep data fresh
   useSessionStatusPolling({
     sessionId: paramsId,
-    enabled: !!session && (session.sessionStatus === "PENDING" || session.sessionStatus === "IN_PROGRESS"),
+    enabled: !!session && (session.sessionStatus === "PENDING" || session.sessionStatus === "PROCESSING"),
     interval: 10000, // Poll every 10 seconds for session detail page
     onStatusChange: (statusData) => {
       if (statusData.status !== session?.sessionStatus) {
@@ -147,7 +149,7 @@ export default function GradingSessionDetail() {
 
   const formatStatus = (status: string) => {
     switch (status.toLowerCase()) {
-      case "in_progress":
+      case "processing":
         return "In Progress"
       case "completed":
         return "Completed"
@@ -190,44 +192,37 @@ export default function GradingSessionDetail() {
   }))
 
   // Transform student data for StudentDetailModal
-  const transformStudentForModal = (student: Student) => {
+  const transformStudentForModal = (student: any) => {
     if (!student) return null
-    
-    // Convert feedback and scores to a more detailed format
-    const questionData: { [key: string]: { score: number; maxScore: number; feedback: string } } = {}
-    
-    // // First, populate with question scores
-    // student.questionScores?.forEach((score: any) => {
-    //   questionData[score.questionId] = {
-    //     score: score.score,
-    //     maxScore: score.maxScore,
-    //     feedback: "No feedback available"
-    //   }
-    // })
-    
-    // Then, add feedback data
-    // student.feedback?.forEach((feedback: any) => {
-    //   if (questionData[feedback.questionId]) {
-    //     questionData[feedback.questionId].feedback = feedback.feedback
-    //   } else {
-    //     // If we have feedback but no score, create an entry
-    //     questionData[feedback.questionId] = {
-    //       score: 0,
-    //       maxScore: 10, // Default max score
-    //       feedback: feedback.feedback
-    //     }
-    //   }
-    // })
+
+    // Prefer rawGradingOutput if available
+    let questionData: { [key: string]: { score: number; feedback: string } } = {}
+    let totalScore = 0
+
+    if (student.rawGradingOutput) {
+      // Support both {results: {...}} and {details: {results: {...}}}
+      let results = student.rawGradingOutput.results || (student.rawGradingOutput.details && student.rawGradingOutput.details.results)
+      if (results) {
+        for (const [qid, qresRaw] of Object.entries(results)) {
+          const qres = qresRaw as { score?: number; feedback?: string }
+          const score = qres.score ?? 0
+          const feedback = qres.feedback ?? ""
+          questionData[qid] = { score, feedback }
+          totalScore += score
+        }
+      }
+    } else {
+      // fallback to old logic if needed
+      // ... existing code ...
+    }
 
     return {
       id: student.id,
-      name: student.studentId,
-      // totalScore: student.totalScore || 0,
-      // maxScore: student.maxScore || 0,
-      // percentage: student.percentage || 0,
-      StudentGradingStatus: student.studentGradingStatus,
+      name: student.studentName || student.studentId,
+      totalScore,
+      studentGradingStatus: student.studentGradingStatus,
       gradedAt: student.gradedAt,
-      questionData: questionData
+      questionData,
     }
   }
 
@@ -252,6 +247,18 @@ export default function GradingSessionDetail() {
     }
   }
   const handleCloseTaskLog = () => setLogTaskId(null)
+
+  // Add state for retry loading
+  const [retrying, setRetrying] = useState(false)
+
+  // Add state for retry modal and file uploads
+  const [showRetryModal, setShowRetryModal] = useState(false)
+  const [retryFiles, setRetryFiles] = useState<Record<string, File | null>>({})
+  const [retrySubmitting, setRetrySubmitting] = useState(false)
+  const [retryError, setRetryError] = useState<string | null>(null)
+
+  // Helper: failed students
+  const failedStudents = session?.students.filter(s => s.studentGradingStatus === "FAILED") || []
 
   if (loading) {
     return (
@@ -344,6 +351,17 @@ export default function GradingSessionDetail() {
               <Download className="mr-2 h-4 w-4" />
               Download All Reports
             </Button>
+            {/* Retry Grading Button */}
+            {(session.sessionStatus === "FAILED" || session.students.some(s => s.studentGradingStatus === "FAILED")) && (
+              <Button
+                variant="destructive"
+                onClick={() => setShowRetryModal(true)}
+                disabled={retrying}
+              >
+                {retrying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertCircle className="mr-2 h-4 w-4" />}
+                Retry Grading
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -487,7 +505,7 @@ export default function GradingSessionDetail() {
                       <th className="pb-3 pr-4 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody >
                     {transformedStudents.length === 0 ? (
                       <tr>
                         <td colSpan={4} className="py-6 text-center text-muted-foreground">
@@ -537,26 +555,125 @@ export default function GradingSessionDetail() {
         </TabsContent>
 
         <TabsContent value="logs" className="mt-6">
-          <SessionLogStream 
-            tasks={session.students
-              .filter(s => s.taskId)
-              .map(s => ({ taskId: s.taskId!, studentId: s.studentId }))}
+          {(() => {
+            const mappedStatus: "completed" | "pending" | "failed" | "in-progress" =
+              session.sessionStatus === "PROCESSING"
+                ? "in-progress"
+                : session.sessionStatus === "COMPLETED"
+                ? "completed"
+                : session.sessionStatus === "FAILED"
+                ? "failed"
+                : "pending"
 
-            sessionStatus={session.sessionStatus.toLowerCase() as "completed" | "in-progress" | "pending" | "failed"} 
-          />
+            return (
+              <SessionLogStream
+                sessionId={session.id}
+                tasks={session.students
+                  .filter(s => s.taskId)
+                  .map(s => ({
+                    taskId: s.taskId!,
+                    studentId: s.studentId,
+                    studentName: s.studentName,
+                    status: (s.studentGradingStatus || "pending").toLowerCase(),
+                  }))}
+                sessionStatus={mappedStatus}
+              />
+            )
+          })()}
         </TabsContent>
       </Tabs>
 
-        {/* // Todo: Implement StudentDetailModal component
-        // This component should display detailed information about the selected student,
-        // including their scores, feedback, and any other relevant data. */}
-      {/* {selectedStudent && (
-        
-        // <StudentDetailModal 
-        //   student={transformStudentForModal(getStudentById(selectedStudent))} 
-        //   onClose={handleCloseStudentDetail} 
-        // />
-      )} */}
+      {/* Render the modal when selectedStudent is set */}
+      {selectedStudent && (
+        <StudentDetailModal 
+          student={transformStudentForModal(getStudentById(selectedStudent))} 
+          onClose={handleCloseStudentDetail} 
+        />
+      )}
+
+      {/* Retry Modal */}
+      <Dialog open={showRetryModal} onOpenChange={setShowRetryModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Re-upload files for failed students</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {failedStudents.length === 0 ? (
+              <div>There are no failed students to retry.</div>
+            ) : (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault()
+                  setRetrySubmitting(true)
+                  setRetryError(null)
+                  try {
+                    for (const student of failedStudents) {
+                      const file = retryFiles[student.id]
+                      if (!file) throw new Error(`No file selected for ${student.studentId}`)
+                      const formData = new FormData()
+                      formData.append("pdf_file", file)
+                      formData.append("grading_guide_json_str", session.gradingRubric)
+                      // 1. Upload to grading backend
+                      const uploadRes = await fetch("/api/grade/upload", {
+                        method: "POST",
+                        body: formData,
+                      })
+                      if (!uploadRes.ok) throw new Error(`Failed to upload for ${student.studentId}`)
+                      const uploadData = await uploadRes.json()
+                      const newTaskId = uploadData.task_id
+                      // 2. Update student record with new taskId and status
+                      const patchRes = await fetch(`/api/students/${student.id}/grading`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          taskId: newTaskId,
+                          status: "PENDING",
+                        }),
+                      })
+                      if (!patchRes.ok) throw new Error(`Failed to update DB for ${student.studentId}`)
+                    }
+                    toast.success("Retry started!", { description: "All failed students re-uploaded. Grading will resume." })
+                    setShowRetryModal(false)
+                    setRetryFiles({})
+                    await fetchSessionDetails()
+                  } catch (err) {
+                    setRetryError(err instanceof Error ? err.message : "Unknown error")
+                  } finally {
+                    setRetrySubmitting(false)
+                  }
+                }}
+              >
+                <div className="space-y-3">
+                  {failedStudents.map(student => (
+                    <div key={student.id} className="flex items-center gap-2">
+                      <span className="w-32">{student.studentId}</span>
+                      <input
+                        type="file"
+                        accept="application/pdf"
+                        onChange={e => {
+                          const file = e.target.files?.[0] || null
+                          setRetryFiles(prev => ({ ...prev, [student.id]: file }))
+                        }}
+                        required
+                        disabled={retrySubmitting}
+                      />
+                    </div>
+                  ))}
+                </div>
+                {retryError && <div className="text-red-500 text-sm mt-2">{retryError}</div>}
+                <DialogFooter className="mt-4">
+                  <Button type="submit" disabled={retrySubmitting || failedStudents.some(s => !retryFiles[s.id])}>
+                    {retrySubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Submit & Retry"}
+                  </Button>
+                  <DialogClose asChild>
+                    <Button type="button" variant="ghost" disabled={retrySubmitting}>Cancel</Button>
+                  </DialogClose>
+                </DialogFooter>
+              </form>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
