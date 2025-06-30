@@ -49,13 +49,12 @@ export function SessionLogStream({ sessionId, tasks, sessionStatus }: SessionLog
       if (response.ok) {
         const sessionLogs = await response.json()
         return sessionLogs.map((log: any) => ({
-          timestamp: new Date(log.createdAt).toLocaleTimeString(),
+          timestamp: new Date(log.createdAt).toISOString(),
           message: log.message,
           level: log.level.toLowerCase() as LogEntry["level"],
           context: log.context,
           details: log.metadata,
           studentId: log.studentId,
-          // Map studentId to studentName if available
           studentName: tasks.find(t => t.studentId === log.studentId)?.studentName,
         }))
       }
@@ -70,7 +69,10 @@ export function SessionLogStream({ sessionId, tasks, sessionStatus }: SessionLog
     if (sessionStatus === "completed") {
       (async () => {
         const sessionLogs = await fetchSessionLogs()
-        setLogs(sessionLogs)
+        setLogs((prev) => {
+          const merged = [...prev, ...sessionLogs]
+          return merged.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        })
       })()
       return
     }
@@ -80,7 +82,10 @@ export function SessionLogStream({ sessionId, tasks, sessionStatus }: SessionLog
       (async () => {
         console.log(`[SessionLogStream] Loading initial historical logs for active session`)
         const sessionLogs = await fetchSessionLogs()
-        setLogs(sessionLogs)
+        setLogs((prev) => {
+          const merged = [...prev, ...sessionLogs]
+          return merged.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        })
         console.log(`[SessionLogStream] Loaded ${sessionLogs.length} initial logs`)
       })()
     }
@@ -231,9 +236,8 @@ export function SessionLogStream({ sessionId, tasks, sessionStatus }: SessionLog
               console.log(`[SessionLogStream] Log paused for task ${task.taskId}`)
             } else {
               setLogs((prev) => {
-                const newLogs = [...prev, logEntry]
-                console.log(`[SessionLogStream] Added log to UI for task ${task.taskId}, total logs: ${newLogs.length}`)
-                return newLogs
+                const merged = [...prev, logEntry]
+                return merged.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
               })
             }
           } catch (error) {
@@ -437,7 +441,7 @@ export function SessionLogStream({ sessionId, tasks, sessionStatus }: SessionLog
                   filteredLogs.map((log, index) => (
                     <div key={index} className="flex flex-col gap-1 text-xs">
                       <div className="flex items-start gap-2">
-                        <span className="text-muted-foreground font-mono whitespace-nowrap">{log.timestamp}</span>
+                        <span className="text-muted-foreground font-mono whitespace-nowrap">{new Date(log.timestamp).toLocaleTimeString()}</span>
                         {getLogIcon(log.level)}
                         <span className={`${getLogStyle(log.level)} flex-1`}>
                           {log.context && (

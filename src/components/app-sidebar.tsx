@@ -29,7 +29,7 @@ export function AppSidebar() {
 
   return (
     <Sidebar>
-      <SidebarHeader className="flex items-center px-4 py-2">
+      <SidebarHeader className="flex items-center px-4 py-10">
         <Link href="/" className="flex items-center gap-2">
           <BookOpen className="h-6 w-6 text-primary" />
           <span className="text-xl font-bold">WAEC AI Grader</span>
@@ -100,7 +100,7 @@ export function AppSidebar() {
             <AvatarFallback>JD</AvatarFallback>
           </Avatar>
           <div className="flex flex-col">
-            <span className="text-sm font-medium">John Doe</span>
+            <span className="text-sm font-medium">Akinsola Mattew</span>
             <span className="text-xs text-muted-foreground">Teacher</span>
           </div>
           <Button variant="ghost" size="icon" className="ml-auto">

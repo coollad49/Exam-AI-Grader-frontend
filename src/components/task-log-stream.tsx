@@ -39,20 +39,25 @@ export function TaskLogStream({ taskId, status }: TaskLogStreamProps) {
           const response = await fetch(`/api/tasks/${taskId}/logs`)
           if (response.ok) {
             const historicalLogs = await response.json()
-            setLogs(
-              historicalLogs.map((log: any) => ({
-                timestamp: new Date(log.createdAt).toLocaleTimeString(),
-                message: log.message,
-                level: log.level.toLowerCase() as LogEntry["level"],
-                context: log.context,
-                details: log.metadata,
-              }))
-            )
+            setLogs((prev) => {
+              const merged = [
+                ...prev,
+                ...historicalLogs.map((log: any) => ({
+                  timestamp: new Date(log.createdAt).toISOString(),
+                  message: log.message,
+                  level: log.level.toLowerCase() as LogEntry["level"],
+                  context: log.context,
+                  details: log.metadata,
+                })),
+              ]
+              return merged.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+            })
           }
         } catch (error) {
-          setLogs([
+          setLogs((prev) => [
+            ...prev,
             {
-              timestamp: new Date().toLocaleTimeString(),
+              timestamp: new Date().toISOString(),
               message: "Task completed - historical logs not available",
               level: "info",
               context: "system",
@@ -198,9 +203,8 @@ export function TaskLogStream({ taskId, status }: TaskLogStreamProps) {
               console.log(`[TaskLogStream] Log paused for task ${taskId}`)
             } else {
               setLogs((prev) => {
-                const newLogs = [...prev, logEntry]
-                console.log(`[TaskLogStream] Added log to UI for task ${taskId}, total logs: ${newLogs.length}`)
-                return newLogs
+                const merged = [...prev, logEntry]
+                return merged.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
               })
             }
           } catch (error) {
@@ -381,7 +385,7 @@ export function TaskLogStream({ taskId, status }: TaskLogStreamProps) {
                   filteredLogs.map((log, index) => (
                     <div key={index} className="flex flex-col gap-1 text-xs">
                       <div className="flex items-start gap-2">
-                        <span className="text-muted-foreground font-mono whitespace-nowrap">{log.timestamp}</span>
+                        <span className="text-muted-foreground font-mono whitespace-nowrap">{new Date(log.timestamp).toLocaleTimeString()}</span>
                         {getLogIcon(log.level)}
                         <span className={`${getLogStyle(log.level)} flex-1`}>
                           {log.context && (

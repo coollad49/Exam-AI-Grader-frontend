@@ -76,9 +76,26 @@ export function StudentDetailModal({ student, onClose }: StudentDetailModalProps
   const questionEntries = Object.entries(student.questionData)
   const totalQuestions = questionEntries.length
 
+  const handleDownloadReport = () => {
+    if (!student) return
+    let report = `Student: ${student.name}\nStatus: ${student.studentGradingStatus}\nTotal Score: ${student.totalScore}\nGraded At: ${student.gradedAt ? new Date(student.gradedAt).toLocaleString() : 'Not completed'}\n\nQuestion Breakdown:\n`
+    Object.entries(student.questionData).forEach(([questionId, data]) => {
+      report += `\nQuestion ${questionId.replace(/^q/, '')}:\n  Score: ${data.score}\n  AI Feedback: ${data.feedback}\n`
+    })
+    const blob = new Blob([report], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${student.name.replace(/\s+/g, '_')}_grading_report.txt`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <Dialog open={!!student} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh]">
+      <DialogContent className="">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             <span>{student.name}</span>
@@ -169,7 +186,7 @@ export function StudentDetailModal({ student, onClose }: StudentDetailModalProps
             <X className="mr-2 h-4 w-4" />
             Close
           </Button>
-          <Button>
+          <Button onClick={handleDownloadReport}>
             <Download className="mr-2 h-4 w-4" />
             Download Report
           </Button>
