@@ -499,10 +499,10 @@ export default function GradingSessionDetail() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b text-left text-sm font-medium text-muted-foreground">
-                      <th className="pb-3 pl-4">Student Name</th>
-                      <th className="pb-3">Score</th>
+                      <th className="pb-3 pl-4">Student ID</th>
+                      {/* <th className="pb-3">Score</th> */}
                       <th className="pb-3">Status</th>
-                      <th className="pb-3 pr-4 text-right">Actions</th>
+                      <th className="pb-3 pr-8 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody >
@@ -516,7 +516,7 @@ export default function GradingSessionDetail() {
                       filteredStudents.map((student) => (
                         <tr key={student.id} className="border-b text-sm">
                           <td className="py-3 pl-4 font-medium">{student.studentId}</td>
-                          <td className="py-3">{student.percentage ? `${student.percentage}%` : "-"}</td>
+                          {/* <td className="py-3">{student.percentage ? `${student.percentage}%` : "-"}</td> */}
                           <td className="py-3">{student.studentGradingStatus}</td>
                           <td className="py-3 pr-4 text-right">
                             <div className="flex justify-end gap-2">
