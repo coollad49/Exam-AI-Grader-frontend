@@ -1,1 +1,1 @@
-## Frontend to An AI Grader system which is my final year Project
+## Frontend to An AI Grading system which is my final year Project
