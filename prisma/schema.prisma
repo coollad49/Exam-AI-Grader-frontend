@@ -10,7 +10,7 @@ datasource db {
   // general scalability compared to SQLite for a production system.
   // If you must use SQLite, the `Json` type will still work,
   // but JSON querying capabilities will be more limited.
-  provider = "sqlite"
+  provider  = "postgresql"
   url      = env("DATABASE_URL")
 }
 
